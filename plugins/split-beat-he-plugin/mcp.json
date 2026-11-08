@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "split_keyboard": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "${PLUGIN_ROOT}/server/split_beat_he_mcp-0.1.0-py3-none-any.whl",
+        "split-beat-he-mcp",
+        "--write-enabled"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

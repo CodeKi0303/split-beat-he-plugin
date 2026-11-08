@@ -1,0 +1,10 @@
+# Merge this table into your Codex config; do not replace unrelated settings.
+# Replace both absolute paths when the repository is on a different PC.
+[mcp_servers.split_keyboard]
+command = "C:/path/to/split-beat-he-plugin/.venv/Scripts/python.exe"
+args = ["C:/path/to/split-beat-he-plugin/host/run_mcp.py", "--write-enabled", "--firmware-write-enabled"]
+startup_timeout_sec = 20
+tool_timeout_sec = 600
+# Omit "--firmware-write-enabled" to disable app update tools.
+# Enabling the tool does not authorize or start an actual firmware update.
+# No physical device is opened until keyboard_connect is called.

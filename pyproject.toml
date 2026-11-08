@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "split-beat-he-mcp"
+version = "0.1.0"
+description = "Local USB HID control for Split-Beat HE keyboards over MCP"
+readme = "docs/MCP-CONTROL.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["mcp==2.3.0", "hidapi==0.15.0"]
+
+[project.scripts]
+split-beat-he-mcp = "split_beat_he_mcp.mcp_server:main"
+
+[project.urls]
+Source = "https://github.com/CodeKi0303/split-beat-he-plugin"
+Studio = "https://studio.codekilab.com/"
+
+[tool.setuptools]
+packages = ["split_beat_he_mcp"]
+package-dir = {split_beat_he_mcp = "host"}

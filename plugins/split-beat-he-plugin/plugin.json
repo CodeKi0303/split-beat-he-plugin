@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "split-beat-he-plugin",
+  "version": "0.1.0",
+  "description": "Configure, calibrate and diagnose Split-Beat HE keyboards connected to this computer.",
+  "homepage": "https://studio.codekilab.com/",
+  "repository": "https://github.com/CodeKi0303/split-beat-he-plugin",
+  "license": "MIT",
+  "author": { "name": "codeki lab" },
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "interface": {
+        "displayName": "Split-Beat HE",
+        "shortDescription": "Split-Beat HE keyboard tools",
+        "longDescription": "Use the local USB connection to tune Hall keys, map inputs and inspect sensor behavior.",
+        "developerName": "codeki lab",
+        "category": "Developer Tools",
+        "defaultPrompt": "Check my Split-Beat HE keyboard and show its current calibration and rapid-trigger settings."
+      }
+    }
+  }
+}

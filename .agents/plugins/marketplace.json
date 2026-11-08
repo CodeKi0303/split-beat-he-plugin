@@ -1,0 +1,12 @@
+{
+  "name": "split-beat-he",
+  "interface": { "displayName": "Split-Beat HE" },
+  "plugins": [
+    {
+      "name": "split-beat-he-plugin",
+      "source": { "source": "local", "path": "./plugins/split-beat-he-plugin" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}
