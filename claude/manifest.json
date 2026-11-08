@@ -1,0 +1,39 @@
+{
+  "manifest_version": "0.4",
+  "name": "split-beat-he-plugin",
+  "display_name": "Split-Beat HE",
+  "version": "0.1.1",
+  "description": "Configure, calibrate, and diagnose Split-Beat HE keyboards over local USB.",
+  "author": {
+    "name": "codeki lab"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CodeKi0303/split-beat-he-plugin.git"
+  },
+  "homepage": "https://studio.codekilab.com/",
+  "license": "MIT",
+  "server": {
+    "type": "uv",
+    "entry_point": "host/run_mcp.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${__dirname}",
+        "host/run_mcp.py",
+        "--write-enabled"
+      ]
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "win32",
+      "darwin"
+    ],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  }
+}
