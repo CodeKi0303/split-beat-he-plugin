@@ -22,6 +22,7 @@ class KeyboardSession:
         self.travel_mm = [4.0] * 14
         self.calibration = None
         self.interference = None
+        self.auto_fit = None
         self._travel_by_identity = {}
         if demo:
             if client is not None:
@@ -36,6 +37,8 @@ class KeyboardSession:
     def require_idle(self):
         if self.calibration is not None and self.calibration.active:
             raise DeviceError("Batch calibration is active. Apply or cancel it before changing settings or starting another measurement.")
+        if self.auto_fit is not None and self.auto_fit.active:
+            raise DeviceError("Automatic fitting is active. Finish or cancel it before changing settings or starting another measurement.")
 
     def identity(self):
         if self.client is None:
@@ -50,7 +53,8 @@ class KeyboardSession:
                 "write_enabled": self.write_enabled,
                 "firmware_write_enabled": self.firmware_write_enabled,
                 "total_travel_mm": list(self.travel_mm),
-                "batch_calibration_active": bool(self.calibration and self.calibration.active)}
+                "batch_calibration_active": bool(self.calibration and self.calibration.active),
+                "auto_fit_active": bool(self.auto_fit and self.auto_fit.active)}
 
     def connect(self, serial=None, demo=False):
         with self.lock:
@@ -76,6 +80,7 @@ class KeyboardSession:
             self.travel_mm = list(self._travel_by_identity.get(self.identity(), [4.0] * 14))
             self.calibration = None
             self.interference = None
+            self.auto_fit = None
             return {**self.status(), "info": info, "changed_device_settings": False}
 
     def disconnect(self):
@@ -84,6 +89,7 @@ class KeyboardSession:
                 self.calibration.close()
             self.calibration = None
             self.interference = None
+            self.auto_fit = None
             client, identity = self.client, self.identity()
             if identity is not None:
                 self._travel_by_identity[identity] = list(self.travel_mm)

@@ -99,7 +99,8 @@ def capture_sensors(client, duration_seconds=2.0, sample_hz=20, include_samples=
 
 
 def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include_samples=True,
-                       *, clock=time.monotonic, delay=time.sleep, total_travel_mm=None):
+                       *, clock=time.monotonic, delay=time.sleep, total_travel_mm=None,
+                       require_output_off=False):
     """Observe one side only; state changes are interval-censored between polls."""
     integer(key, 0, 13, "key")
     seconds = duration(duration_seconds)
@@ -127,6 +128,8 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
             delay(target - now)
         request_time = clock()
         status = client.status(side)
+        if require_output_off and status.get("output_enabled") is not False:
+            raise DeviceError("Output became enabled during automatic fitting; capture rejected")
         response_time = clock()
         if response_time < request_time or request_time < last_host_time:
             raise DeviceError("Host clock moved backwards; timing capture rejected")

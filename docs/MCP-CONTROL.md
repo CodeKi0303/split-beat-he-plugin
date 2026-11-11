@@ -47,6 +47,8 @@ MCP 클라이언트가 도구 이름 앞에 서버 이름을 붙일 수 있습�
 | 저장·실제 출력 | `keyboard_save`, `keyboard_output` |
 | 센서 통계 | `keyboard_capture_sensors` |
 | 눌림·해제 시계열 | `keyboard_capture_key_timing` |
+| RT 자동 맞춤 | `keyboard_autofit_begin`, `keyboard_autofit_status`, `keyboard_autofit_capture`, `keyboard_autofit_recommend`, `keyboard_autofit_apply`, `keyboard_autofit_cancel` |
+| 자동 맞춤 기록 | `keyboard_autofit_export`, `keyboard_autofit_analyze` |
 | 다른 키 영향 비교 | `keyboard_interference_baseline`, `keyboard_interference_compare` |
 | 장치 성능·통신 | `keyboard_measure_performance`, `keyboard_measure_link` |
 | 앱 업데이트 | `keyboard_firmware_inspect`, `keyboard_firmware_update` |
@@ -55,6 +57,12 @@ MCP 클라이언트가 도구 이름 앞에 서버 이름을 붙일 수 있습�
 키 위치는 `keyboard_layout`에서 확인합니다. 입력은 Hall 14개, 일반 접점·클릭 6개, 인코더 방향 8개입니다. 작동점·RT·데드존은 Hall 키에만 적용합니다. 키보드 usage, 조합키, 마우스 5버튼, 세로/가로 스크롤, 지원 미디어 키는 카탈로그로 찾을 수 있습니다. 임의 문자열 매크로 실행이나 운영체제 키 입력 기록 도구는 제공하지 않습니다.
 
 ## 설정이 적용되는 범위
+
+자동 맞춤은 보정된 Hall 키 하나와 확인된 스위치 총 스트로크를 사용합니다. `keyboard_autofit_begin`에 키, `total_travel_mm`, 사용 목적 `balanced`·`repeat`·`hold`를 전달합니다. 도구가 알려 주는 자세를 사용자에게 안내하고 준비됐다는 응답을 받은 뒤 `keyboard_autofit_capture`를 호출합니다. 순서는 `released` 3초, `resting` 3초, `tapping` 10초, `holding` 5초입니다. 반복 입력은 편한 속도로 6회 이상 충분히 눌렀다 놓습니다. 길게 누르기는 사용자가 이미 누른 상태에서 측정을 시작합니다.
+
+네 단계가 끝나면 `keyboard_autofit_recommend`가 관찰한 입력을 여러 작동점·RT 설정으로 재생해 후보를 비교합니다. 사용자가 자동 설정을 요청한 범위에서 `keyboard_autofit_apply`를 호출하면 측정한 키에 적용하고 전체 설정을 읽어 대조합니다. `keyboard_autofit_begin`의 `retest=true`로 같은 키·스트로크·사용 목적을 다시 측정하면 실제 눌림 판정과 첫 측정 결과를 함께 확인할 수 있습니다. 새로 시작하거나 중단하려면 `keyboard_autofit_cancel`을 호출합니다. 진행 중에는 다른 설정 작업을 잠시 잠급니다.
+
+추천은 호스트가 관찰한 센서 샘플을 사용합니다. 매우 짧은 변화는 샘플 사이에서 누락될 수 있으며 mm는 선택한 보정 곡선과 스트로크로 추정합니다. MCP의 반복 입력은 자기 속도로 진행하며 소리와 비교하려면 Studio의 리듬 측정을 사용합니다. 기록을 `keyboard_autofit_export`로 내보내고 Studio의 같은 형식 기록을 `keyboard_autofit_analyze`로 분석할 수 있습니다. 저장과 키 출력은 사용자의 요청에 따라 `keyboard_save`와 `keyboard_output`으로 마무리합니다.
 
 | 동작 | 결과 |
 |---|---|

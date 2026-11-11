@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "split-beat-he-plugin",
   "display_name": "Split-Beat HE",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Configure, calibrate, and diagnose Split-Beat HE keyboards over local USB.",
   "author": {
     "name": "codeki lab"

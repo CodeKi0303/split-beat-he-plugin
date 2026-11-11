@@ -29,7 +29,7 @@ def build_server(client=None):
                 raise ToolError(str(exc)) from exc
         return wrapped
 
-    server = MCPServer("split_keyboard", version="0.3.5", instructions="Start with keyboard_session and keyboard_list_devices. Connect an exact serial explicitly; startup does not claim a physical device. Demo responses are simulation, never hardware validation. Configuration changes release keys and remain in RAM until explicit save verifies reboot/readback. Separate normalized 0..1000 from estimated mm and preserve measured calibration. Nonlinear curve selection needs capability0x200; use keyboard_curve_catalog for approximation limits and stroke scaling. Use physical user actions during calibration. Capture tools expose bounded host snapshots, not full ADC streams. Firmware update requires its separate permission and explicit action. Never report untested hardware performance as verified.")
+    server = MCPServer("split_keyboard", version="0.1.2", instructions="Start with keyboard_session and keyboard_list_devices. Connect an exact serial explicitly; startup does not claim a physical device. Demo responses are simulation, never hardware validation. Configuration changes release keys and remain in RAM until explicit save verifies reboot/readback. Separate normalized 0..1000 from estimated mm and preserve measured calibration. Nonlinear curve selection needs capability0x200; use keyboard_curve_catalog for approximation limits and stroke scaling. Use physical user actions during calibration. Capture tools expose bounded host snapshots, not full ADC streams. Firmware update requires its separate permission and explicit action. Never report untested hardware performance as verified.")
     read = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
     write = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
 
@@ -151,6 +151,8 @@ def build_server(client=None):
     register_configuration_tools(server, session, read, write, explain_errors)
     register_calibration_tools(server, session, read, write, explain_errors)
     register_maintenance_tools(server, session, read, write, explain_errors)
+    from .mcp_auto_fit import register_auto_fit_tools
+    register_auto_fit_tools(server, session, read, write, explain_errors)
     return server
 
 

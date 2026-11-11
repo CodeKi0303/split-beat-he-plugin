@@ -25,6 +25,21 @@ Use the connected `split_keyboard` MCP tools; the client may prefix their names.
 
 ## Calibration, measurements, firmware
 
+For beginner RT fitting, use `keyboard_autofit_begin` with the measured Hall key,
+the known total switch stroke and preference `balanced`, `repeat` or `hold`.
+Guide the returned physical pose and wait for the user's readiness before each
+`keyboard_autofit_capture`. Capture `released`, `resting`, `tapping`, then
+`holding`. Tapping is self-paced with at least six complete presses; the user
+holds the key before starting the holding capture. Use `keyboard_autofit_recommend`
+to compare candidates. An authorized automatic-configuration request permits
+`keyboard_autofit_apply`; it applies the measured key in RAM and verifies the
+whole profile. Begin with `retest=true` to collect new evidence after applying.
+Use reported observed error counts when explaining the result. Captures use
+host snapshots and estimated distances. For audio timing, use Studio's rhythm
+test. Save and enable output when requested. Use `keyboard_autofit_cancel` to
+abandon or restart a fit. Imported records can be analyzed with
+`keyboard_autofit_analyze` without creating a device-write session.
+
 Read [workflows.md](references/workflows.md) for a calibration, interference measurement, or firmware update. These need specific physical poses or update checks.
 
 For press/release time series use `keyboard_capture_key_timing`. For sound-referenced BPM tests use the browser's 리듬 · RT 측정 tab; its JSON preserves samples, audio references and the measured key configuration. Start with zero timing offset and distinguish an optional personal offset from measured hardware latency. Never claim snapshot edge times are exact hardware events.
