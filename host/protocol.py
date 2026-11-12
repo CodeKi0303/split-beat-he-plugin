@@ -12,6 +12,7 @@ CAP_CPU_PROFILE = 0x800
 CAP_ADC_IRQ_PROFILE = 0x1000
 CAP_KEY_CHORD = 0x2000
 CAP_SAVE_OUTPUT = 0x4000
+CAP_RETRIGGER_BEFORE_RELEASE = 0x40000
 INFO, STATUS, GET_KEY, SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, GET_BINDING, SET_BINDING = range(1, 11)
 MUTATIONS = {SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, SET_BINDING}
 STATUSES = ["OK", "BAD_COMMAND", "BAD_PACKET", "BAD_INDEX", "BAD_CONFIG", "BUSY", "CALIBRATION_INVALID", "NOT_READY", "STORAGE_ERROR"]
@@ -72,7 +73,7 @@ def key_record(value):
         raise ProtocolError("key record fields do not match schema")
     d = {k: integer(value.get(k, 0), 0, 65535, k) for k in KEY_FIELDS}
     integer(d["key"], 0, 13, "key")
-    integer(d["flags"], 0, 7, "flags")
+    integer(d["flags"], 0, 15, "flags")
     for k in ("released", "pressed"):
         integer(d[k], 0, 4095, k)
     for k in ("actuation", "rt_press", "rt_release"):
@@ -101,6 +102,8 @@ def decode_key(data):
 
 
 def require_key_capability(key, capabilities):
+    if key["flags"] & 8 and not capabilities & CAP_RETRIGGER_BEFORE_RELEASE:
+        raise ProtocolError("Retrigger before release requires capability 0x40000; no device mutation performed")
     if key.get("bottom_deadzone", 0) and not capabilities & CAP_BOTTOM_DEADZONE:
         raise ProtocolError("Bottom deadzone requires firmware 0.3.4+; no device mutation performed")
     if key.get("curve_id", 0) and not capabilities & CAP_HALL_CURVE:

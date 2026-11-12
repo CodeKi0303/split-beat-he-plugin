@@ -6,6 +6,7 @@ import math
 
 from .hall_curve import normalized_from_raw
 from .protocol import key_record
+from .sampled_rt import SampledRT
 
 PHASES = ("released", "resting", "tapping", "holding")
 PHASE_NAMES = dict(zip(PHASES, ("손 떼기", "손 얹기", "반복 입력", "길게 누르기")))
@@ -38,46 +39,6 @@ def depth(raw, config):
     return normalized_from_raw(raw, config["released"], config["pressed"], config.get("curve_id", 0))
 
 
-class SampledRT:
-    def __init__(self, config):
-        self.config = key_record(config)
-        if self.config["flags"] & 5 != 5 or abs(config["pressed"] - config["released"]) < 128:
-            raise ValueError("활성화된 Hall 키를 먼저 캘리브레이션하세요.")
-        self.filtered = None
-        self.pressed = self.rapid = False
-        self.extreme = 0
-
-    def step(self, raw):
-        c = self.config
-        if self.filtered is None or abs(raw - self.filtered) >= c["noise_deadband"]:
-            self.filtered = raw
-        travel = depth(self.filtered, c)
-        if not c["flags"] & 1 or travel <= c["top_deadzone"]:
-            self.pressed = self.rapid = False
-            self.extreme = travel
-        elif not c["flags"] & 2:
-            self.pressed = travel >= c["actuation"]
-            self.rapid = False
-            self.extreme = travel
-        elif c["bottom_deadzone"] and travel >= 1000 - c["bottom_deadzone"]:
-            self.pressed = self.rapid = True
-            self.extreme = 1000 - c["bottom_deadzone"]
-        elif not self.rapid:
-            if travel >= c["actuation"]:
-                self.pressed = self.rapid = True
-                self.extreme = travel
-        elif self.pressed:
-            self.extreme = max(self.extreme, travel)
-            if self.extreme - travel >= c["rt_release"]:
-                self.pressed = False
-                self.extreme = travel
-        else:
-            self.extreme = min(self.extreme, travel)
-            if travel - self.extreme >= c["rt_press"]:
-                self.pressed = True
-                self.extreme = travel
-        return self.pressed
-
 
 def find_cycles(rows, low, high):
     cycles = []
@@ -108,6 +69,8 @@ def prepare(value):
     config = key_record(value["keyConfig"])
     if "key" in value and (type(value["key"]) is not int or value["key"] != config["key"]):
         raise ValueError("측정한 키와 설정의 키가 다릅니다.")
+    if config["flags"] & 8:
+        raise ValueError("미해제 재입력을 끈 뒤 자동 맞춤을 진행하세요. 호스트 샘플로 USB 재입력 펄스를 검증할 수 없습니다.")
     SampledRT(config)
     preference = value.get("preference", "balanced")
     if preference not in ("balanced", "repeat", "hold"):
@@ -222,6 +185,8 @@ def describe(config, data):
 def evaluate_auto_fit(config, value):
     try:
         data = prepare(value)
+        if key_record(config)["flags"] & 8:
+            raise ValueError("미해제 재입력을 끈 뒤 자동 맞춤을 진행하세요.")
         model = SampledRT(config)
         return dict(ready=True, reasons=[], metrics=metrics(model.config, data),
                     observedMetrics=metrics(model.config, data, True) if has_observed(data) else None,

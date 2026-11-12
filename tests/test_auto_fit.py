@@ -53,6 +53,22 @@ def feed(state, session, record):
 
 
 class AutoFitTests(unittest.TestCase):
+    def test_retrigger_mode_refuses_fitting_before_output_change(self):
+        for flags in (13, 15):
+            session, transport, record, tools = setup()
+            key = record["keyConfig"]["key"]
+            transport.profile["keys"][key]["flags"] = flags
+            transport.enabled = True
+            with self.assertRaisesRegex(DeviceError, "미해제 재입력"):
+                tools["keyboard_autofit_begin"](key, 3.4)
+            self.assertFalse(set(transport.commands) & MUTATIONS)
+            self.assertTrue(transport.enabled)
+            record["keyConfig"]["flags"] = flags
+            self.assertFalse(analyze_auto_fit(record)["ready"])
+            self.assertFalse(evaluate_auto_fit(record["keyConfig"], record)["ready"])
+            record["keyConfig"]["flags"] = 7
+            self.assertFalse(evaluate_auto_fit({**record["keyConfig"], "flags": flags}, record)["ready"])
+
     def test_studio_python_parity(self):
         for case in FIXTURE["valid"]:
             with self.subTest(case=case["name"]):

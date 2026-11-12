@@ -16,7 +16,7 @@ from .performance import (PERFORMANCE, LINK_PERFORMANCE, LINK_FIELDS, ADC_DIAGNO
                           ADC_IRQ_PROFILE, decode_adc_irq_profile_begin, decode_adc_irq_profile_page,
                           decode_performance, decode_link_performance, decode_adc_diagnostics,
                           compare_samples, delta32)
-from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD
+from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE
 from .hall_curve import normalized_to_mm, raw_to_estimated_mm
 
 
@@ -109,10 +109,11 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
         raise ValueError("include_samples must be boolean")
     side, offset = divmod(key, 7)
     before = client.info()
-    key_config = None
+    key_config = client.get_config()["keys"][key]
+    if key_config["flags"] & 10 == 10:
+        raise DeviceError("Turn off retrigger_before_release before timing analysis: STATUS snapshots do not expose synthetic USB release/press pulses. Raw sensor diagnostics remain available.")
     if total_travel_mm is not None:
         normalized_to_mm(0, total_travel_mm)  # validate metadata before capture
-        key_config = client.get_config()["keys"][key]
     start = clock()
     rows, edges, holds, issues = [], [], [], []
     counts = dict(duplicates=0, stale=0, resets=0, gaps=0, invalid=0)
@@ -179,7 +180,7 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
                            earliest_ms=request_ms-age/1000, latest_ms=response_ms,
                            sequence=seq, raw=raw, travel=travel,
                            pressed=bool(mask & (1 << key)), segment=segment)
-                if key_config is not None:
+                if total_travel_mm is not None:
                     row["travel_mm"] = normalized_to_mm(travel, total_travel_mm)
                     row["raw_estimated_mm"] = raw_to_estimated_mm(raw, key_config, total_travel_mm)
                 if previous is not None and row["pressed"] != previous["pressed"]:
@@ -218,7 +219,7 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
                   limits="Host snapshots and interval-censored edges only; short transitions between polls can be missed. Right source age refers to left-side receipt, not the remote ADC instant. No audio reference or physical latency measurement; use the browser rhythm lab for sound comparison.")
     if include_samples:
         result["samples"] = rows
-    if key_config is not None:
+    if total_travel_mm is not None:
         result.update(total_travel_mm=total_travel_mm,
                       curve_id=key_config.get("curve_id", 0),
                       key_config=key_config,
@@ -231,6 +232,7 @@ def capability_summary(info):
     version = (info["major"], info["minor"], info["patch"])
     return {"mouse_button_mapping": bool(caps & 0x20),
             "keyboard_chord_mapping": bool(caps & CAP_KEY_CHORD),
+            "retrigger_before_release": bool(caps & CAP_RETRIGGER_BEFORE_RELEASE),
             "bottom_deadzone": bool(caps & 0x100),
             "nonlinear_hall_curve": bool(caps & 0x200),
             "firmware_update_protocol": bool(caps & 0x40),
@@ -457,7 +459,7 @@ def register_diagnostic_tools(server, session, read, write, guard):
     @guard
     def keyboard_capture_key_timing(key: StrictInt, duration_seconds: StrictFloat = 5.0,
                                     sample_hz: StrictInt = 100, include_samples: StrictBool = True) -> dict[str, Any]:
-        """Read selected Hall key raw/travel/actual pressed state for0.2..10s at5..100host snapshots/s. Returns request/response and source-age timing, observed edge brackets and complete hold-duration bounds. Stale/reset/gap samples never join edges. Read-only; no audio, output or settings changes. Use browser rhythm lab for BPM/audio comparison."""
+        """Read selected Hall key raw/travel/actual pressed state for0.2..10s at5..100host snapshots/s. Returns request/response and source-age timing, observed edge brackets and complete hold-duration bounds. Stale/reset/gap samples never join edges. Rejects RT+retrigger mode because snapshots omit synthetic USB pulses. Read-only; no audio, output or settings changes. Use browser rhythm lab for BPM/audio comparison."""
         session.require_idle()
         integer(key, 0, 13, "key")
         return capture_key_timing(session.require_client(), key, duration_seconds, sample_hz, include_samples,

@@ -108,3 +108,27 @@ mm는 **스위치의 총 스트로크**를 기준으로 정규화한 값입니�
 - “이 펌웨어 패키지를 검사만 하고 어느 쪽용인지 알려줘.”
 
 재사용 스킬은 [skills/keyboard-control](../plugins/split-beat-he-plugin/skills/keyboard-control/SKILL.md)에 있습니다. Codex에서 설치한 경우 `$keyboard-control`로 호출하거나 키보드 설정 요청에 자동으로 적용할 수 있습니다. 스킬은 도구의 사용 순서와 물리 보정 절차를 안내하며, MCP 서버 자체를 대신하지 않습니다.
+
+
+## 미해제 재입력 허용
+
+`keyboard_preview_keys` / `keyboard_set_keys`의 patch에
+`{"retrigger_before_release": true}`를 지정하거나 `keyboard_set_key`의 같은
+boolean 인자를 사용합니다. 기본은 꺼짐이며 capability `0x40000`이 필요합니다.
+RT가 켜진 키가 해제 거리까지 올라오지 않았어도, 올라온 최저점에서 다시
+`rt_press`만큼 누르면 실제 USB 해제→눌림을 한 번 보냅니다. 계속 누르는
+것만으로 반복 입력하지 않습니다. 일반 RT 해제와 상·하단 데드존이 우선합니다.
+이 옵션은 롱노트를 끊을 수 있습니다. RT를 끄면 옵션은 저장된 채 동작하지
+않습니다. 지정하지 않은 필드와 보정·매핑은 유지됩니다.
+
+전체 프로필에서는 key.flags의 `0x08` 비트로 보관하며, 기존 22바이트
+키 레코드 크기는 유지합니다. `keyboard_key_options`는 키별 `retrigger_before_release`와 실제 활성 조건을
+이름으로 보여 주며, 미리보기에는 `proposed_options`로 나타납니다.
+`keyboard_get_config` / 프로필 내보내기는 원래 flags 레코드를 유지합니다. 지원하지 않는 펌웨어에는 프로필·개별·단체 설정
+모두 장치 변경 전에 거부합니다. False로 끄는 것은 기존 펌웨어에서도 됩니다.
+
+호스트 STATUS의 pressed 값은 논리적인 유지 상태이므로 USB의 짧은
+해제→눌림 펄스를 보여주지 않습니다. 자동 맞춤은 옵션이 켜진 키를 거부하고,
+눌림·해제 시간 분석은 RT와 옵션이 함께 켜졌을 때 거부합니다. 원시 센서
+진단은 계속 사용할 수 있습니다. 데모와 SampledRT 모델은 재입력 요청의
+발생만 모사하며 USB 전송 완료나 실제 게임의 입력을 검증하지 않습니다.

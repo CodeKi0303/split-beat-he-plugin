@@ -29,7 +29,7 @@ def build_server(client=None):
                 raise ToolError(str(exc)) from exc
         return wrapped
 
-    server = MCPServer("split_keyboard", version="0.1.2", instructions="Start with keyboard_session and keyboard_list_devices. Connect an exact serial explicitly; startup does not claim a physical device. Demo responses are simulation, never hardware validation. Configuration changes release keys and remain in RAM until explicit save verifies reboot/readback. Separate normalized 0..1000 from estimated mm and preserve measured calibration. Nonlinear curve selection needs capability0x200; use keyboard_curve_catalog for approximation limits and stroke scaling. Use physical user actions during calibration. Capture tools expose bounded host snapshots, not full ADC streams. Firmware update requires its separate permission and explicit action. Never report untested hardware performance as verified.")
+    server = MCPServer("split_keyboard", version="0.1.3", instructions="Start with keyboard_session and keyboard_list_devices. Connect an exact serial explicitly; startup does not claim a physical device. Demo responses are simulation, never hardware validation. Configuration changes release keys and remain in RAM until explicit save verifies reboot/readback. Separate normalized 0..1000 from estimated mm and preserve measured calibration. Nonlinear curve selection needs capability0x200; use keyboard_curve_catalog for approximation limits and stroke scaling. Use physical user actions during calibration. Capture tools expose bounded host snapshots, not full ADC streams. Firmware update requires its separate permission and explicit action. Never report untested hardware performance as verified.")
     read = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
     write = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
 
@@ -66,18 +66,20 @@ def build_server(client=None):
 
     @server.tool(annotations=write, structured_output=True)
     @explain_errors
-    def keyboard_set_key(key: StrictInt, enabled: StrictBool, rapid_trigger: StrictBool, actuation: StrictInt, rt_press: StrictInt, rt_release: StrictInt, top_deadzone: StrictInt, noise_deadband: StrictInt, bottom_deadzone: StrictInt | None = None, curve_id: StrictInt | None = None) -> dict[str, Any]:
-        """Change one Hall key's RAM behavior, preserve calibration. Normalized range0..1000, noise0..100; output is disabled. Omitted bottom_deadzone/curve_id preserve current values. Nonzero bottom needs capability0x100; curve1 approximate Owlab Ti HE needs0x200. See keyboard_curve_catalog. Requires write-enabled session."""
+    def keyboard_set_key(key: StrictInt, enabled: StrictBool, rapid_trigger: StrictBool, actuation: StrictInt, rt_press: StrictInt, rt_release: StrictInt, top_deadzone: StrictInt, noise_deadband: StrictInt, bottom_deadzone: StrictInt | None = None, curve_id: StrictInt | None = None, retrigger_before_release: StrictBool | None = None) -> dict[str, Any]:
+        """Change one Hall key's RAM behavior, preserve calibration. Normalized range0..1000, noise0..100; output is disabled. Omitted bottom_deadzone/curve_id/retrigger_before_release preserve current values. Retrigger before release (default off, capability0x40000) sends synthetic release/press on partial-release/down reversal, only with RT; this interrupts long notes. Nonzero bottom needs capability0x100; curve1 approximate Owlab Ti HE needs0x200. See keyboard_curve_catalog. Requires write-enabled session."""
         from .protocol import integer
         integer(key,0,13,"key")
         session.require_idle()
         client = session.require_client()
         record = client.get_config()["keys"][key]
-        record.update(flags=(record["flags"]&4)|int(enabled)|(int(rapid_trigger)<<1), actuation=actuation, rt_press=rt_press, rt_release=rt_release, top_deadzone=top_deadzone, noise_deadband=noise_deadband)
+        record.update(flags=(record["flags"] & ~3)|int(enabled)|(int(rapid_trigger)<<1), actuation=actuation, rt_press=rt_press, rt_release=rt_release, top_deadzone=top_deadzone, noise_deadband=noise_deadband)
         if bottom_deadzone is not None:
             record["bottom_deadzone"] = bottom_deadzone
         if curve_id is not None:
             record["curve_id"] = curve_id
+        if retrigger_before_release is not None:
+            record["flags"] = (record["flags"] & ~8) | (int(retrigger_before_release) << 3)
         return client.set_key(record)
 
     @server.tool(annotations=write, structured_output=True)

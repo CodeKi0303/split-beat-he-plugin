@@ -13,10 +13,10 @@ WebHID의 키보드 연결을 종료한 다음 MCP에서 연결하세요. 설정
 서버만 설치하려면 배포 ZIP의 `server/`에 들어 있는 wheel을 Python 3.10 이상의 가상 환경에 설치합니다. 기본 실행은 읽기 전용입니다.
 
 ```text
-python -m pip install path/to/split_beat_he_mcp-0.1.2-py3-none-any.whl
+python -m pip install path/to/split_beat_he_mcp-0.1.3-py3-none-any.whl
 split-beat-he-mcp --help
 ```
 
 MCP 클라이언트에서 `split-beat-he-mcp`를 stdio 명령으로 등록합니다. 설정 변경에는 `--write-enabled`를 추가합니다. 정식 펌웨어 배포 파일은 [GitHub Releases](https://github.com/CodeKi0303/split-beat-he-firmware/releases)에서 확인할 수 있습니다.
 
-Claude Desktop은 [같은 릴리스의 `.mcpb`](https://github.com/CodeKi0303/split-beat-he-plugin/releases/tag/v0.1.2)를 Extensions 메뉴에서 설치합니다.
+Claude Desktop은 [같은 릴리스의 `.mcpb`](https://github.com/CodeKi0303/split-beat-he-plugin/releases/tag/v0.1.3)를 Extensions 메뉴에서 설치합니다.

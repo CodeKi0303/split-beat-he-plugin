@@ -17,12 +17,12 @@ from pydantic import StrictFloat, StrictInt
 from .client import DeviceError
 from .hall_curve import curve_catalog
 from .protocol import (
-    CAP_KEY_CHORD, DEFAULTS, ProtocolError, binding_record, integer, key_record,
+    CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, ProtocolError, binding_record, integer, key_record,
     require_binding_capability, require_key_capability, validate_profile,
 )
 
 DISTANCES = ("actuation", "rt_press", "rt_release", "top_deadzone", "bottom_deadzone")
-PATCH_FIELDS = {*DISTANCES, "noise_deadband", "enabled", "rapid_trigger", "curve_id"}
+PATCH_FIELDS = {*DISTANCES, "noise_deadband", "enabled", "rapid_trigger", "retrigger_before_release", "curve_id"}
 POSITION_NAMES = ("CAPS", "Q", "W", "E", "R", "SHIFT", "SPACE")
 
 
@@ -69,10 +69,10 @@ def propose_keys(profile, keys, patch, *, unit="normalized", travel_mm=None, cap
     if unit not in ("normalized", "mm"):
         raise ProtocolError("unit must be normalized or mm")
     if not isinstance(patch, dict) or not patch or not set(patch) <= PATCH_FIELDS:
-        raise ProtocolError("Patch supports only actuation, rt_press, rt_release, top_deadzone, bottom_deadzone, noise_deadband, enabled, rapid_trigger, curve_id")
+        raise ProtocolError("Patch supports only actuation, rt_press, rt_release, top_deadzone, bottom_deadzone, noise_deadband, enabled, rapid_trigger, retrigger_before_release, curve_id")
     travel = validate_travel(travel_mm if travel_mm is not None else [4.0] * 14)
     integer(capabilities, 0, 0xffffffff, "capabilities")
-    for name in ("enabled", "rapid_trigger"):
+    for name in ("enabled", "rapid_trigger", "retrigger_before_release"):
         if name in patch and type(patch[name]) is not bool:
             raise ProtocolError(f"{name}: boolean required")
     if "noise_deadband" in patch:
@@ -111,6 +111,8 @@ def propose_keys(profile, keys, patch, *, unit="normalized", travel_mm=None, cap
             record["flags"] = (record["flags"] & ~1) | int(patch["enabled"])
         if "rapid_trigger" in patch:
             record["flags"] = (record["flags"] & ~2) | (int(patch["rapid_trigger"]) << 1)
+        if "retrigger_before_release" in patch:
+            record["flags"] = (record["flags"] & ~8) | (int(patch["retrigger_before_release"]) << 3)
         if patch.get("enabled") is True and not record["flags"] & 4:
             raise ProtocolError(f"Hall {key}: calibrate before enabling")
         record = key_record(record)
@@ -321,7 +323,26 @@ def _not_calibrating(session, client):
             raise DeviceError("Finish or cancel the current individual calibration before changing other settings")
 
 
+def key_options(record):
+    return dict(key=record["key"], enabled=bool(record["flags"] & 1),
+                rapid_trigger=bool(record["flags"] & 2),
+                retrigger_before_release=bool(record["flags"] & 8),
+                retrigger_active=bool(record["flags"] & 15 == 15))
+
+
 def register_configuration_tools(server, session, read, write, guard):
+    @server.tool(annotations=read, structured_output=True)
+    @guard
+    def keyboard_key_options(keys: list[StrictInt] | None = None) -> dict[str, Any]:
+        """Read named Hall flags, including retrigger_before_release. Omitted keys selects all14. Feature support comes from installed firmware; active requires enabled+calibrated+RT. Raw profiles keep their unchanged flags field."""
+        ids = list(range(14)) if keys is None else selected_keys(keys)
+        client = session.require_client()
+        profile, info = client.get_config(), client.info()
+        return dict(keys=[key_options(profile["keys"][key]) for key in ids],
+                    retrigger_supported=bool(info["capabilities"] & CAP_RETRIGGER_BEFORE_RELEASE),
+                    retrigger_default=False,
+                    note="Synthetic USB release/press interrupts long notes. Option is inactive while RT is off. STATUS snapshots do not expose the USB pulse.")
+
     @server.tool(annotations=read, structured_output=True)
     @guard
     def keyboard_curve_catalog() -> dict[str, Any]:
@@ -359,12 +380,13 @@ def register_configuration_tools(server, session, read, write, guard):
     @server.tool(annotations=read, structured_output=True)
     @guard
     def keyboard_preview_keys(keys: list[StrictInt], patch: dict, unit: str = "normalized") -> dict[str, Any]:
-        """Preview a partial Hall-settings patch without writes. unit normalized(0..1000 integers) or mm(0.01 increments using session stroke). Return fingerprint for optimistic apply. Valid patch fields: actuation,rt_press,rt_release,top_deadzone,bottom_deadzone,noise_deadband,enabled,rapid_trigger,curve_id(0 linear,1 approximate Owlab Ti HE). Nonzero curve requires capability0x200. See keyboard_curve_catalog."""
+        """Preview a partial Hall-settings patch without writes. unit normalized(0..1000 integers) or mm(0.01 increments using session stroke). Return fingerprint for optimistic apply. Valid patch fields: actuation,rt_press,rt_release,top_deadzone,bottom_deadzone,noise_deadband,enabled,rapid_trigger,retrigger_before_release,curve_id(0 linear,1 approximate Owlab Ti HE). Nonzero curve requires capability0x200. retrigger_before_release is a strict boolean, needs capability0x40000 and sends release/press pulses while RT remains held, breaking long notes. See keyboard_curve_catalog."""
         client = session.require_client()
         original = client.get_config()
         info = client.info()
         proposed = propose_keys(original, keys, patch, unit=unit, travel_mm=session.travel_mm, capabilities=info["capabilities"])
         return dict(fingerprint=profile_fingerprint(original), proposed_keys=proposed,
+                    proposed_options=[key_options(record) for record in proposed],
                     effective_mm=[{"key": key["key"], **{field: key[field] * session.travel_mm[key["key"]] / 1000 for field in DISTANCES}} for key in proposed],
                     device_written=False, note="Only patched fields change; measured endpoints and mappings stay per key. Curve changes alter RT/AP distance behavior without automatically changing numeric thresholds; mm is a travel-scaled estimate.")
 

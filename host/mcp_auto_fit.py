@@ -34,6 +34,8 @@ class AutoFitSession:
         config = profile["keys"][key]
         if config["flags"] & 5 != 5 or abs(config["released"] - config["pressed"]) < 128:
             raise DeviceError("Select an enabled, calibrated Hall key")
+        if config["flags"] & 8:
+            raise DeviceError("미해제 재입력을 끈 뒤 자동 맞춤을 진행하세요. 호스트 샘플로 USB 재입력 펄스를 검증할 수 없습니다.")
         status = client.status(key // 7)
         if not status["fresh"] or status["calibration_state"]:
             raise DeviceError("The selected Hall key must have fresh data and no calibration in progress")
