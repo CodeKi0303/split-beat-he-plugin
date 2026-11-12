@@ -1,4 +1,4 @@
 interface:
   display_name: "Split-Beat HE"
   short_description: "Configure and diagnose Split-Beat HE keyboards"
-  default_prompt: "Use $keyboard-control to inspect my connected Split-Beat HE and apply the settings I request."
+  default_prompt: "Use $keyboard-control to read my connected Split-Beat HE’s current mapping and saved/unsaved state, guide me using the mapped key names, and apply the settings I request."

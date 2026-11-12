@@ -8,10 +8,11 @@ import zlib
 from .protocol import *
 from .hall_curve import normalized_from_raw
 from .sampled_rt import SampledRT
+from .default_bindings import default_bindings
 
 
 def defaults():
-    return validate_profile(dict(schema="c77-profile-v1", board="C77", keys=[dict(key=i, flags=3, released=0, pressed=0, actuation=200, rt_press=100, rt_release=100, top_deadzone=20, noise_deadband=5) for i in range(14)], bindings=[dict(input=i, kind=1 if i<20 else 2, code=4+i if i<20 else (1 if i%2 == 0 else -1), modifiers=0) for i in range(28)]))
+    return validate_profile(dict(schema="c77-profile-v1", board="C77", keys=[dict(key=i, flags=3, released=0, pressed=0, actuation=200, rt_press=100, rt_release=100, top_deadzone=20, noise_deadband=5) for i in range(14)], bindings=default_bindings()))
 
 
 class DemoTransport:

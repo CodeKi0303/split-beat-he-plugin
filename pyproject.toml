@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "split-beat-he-mcp"
-version = "0.1.3"
+version = "0.1.4"
 description = "Local USB HID control for Split-Beat HE keyboards over MCP"
 readme = "docs/MCP-CONTROL.md"
 requires-python = ">=3.10"
@@ -22,3 +22,6 @@ Studio = "https://studio.codekilab.com/"
 [tool.setuptools]
 packages = ["split_beat_he_mcp"]
 package-dir = {split_beat_he_mcp = "host"}
+
+[tool.setuptools.package-data]
+split_beat_he_mcp = ["default-bindings.json"]

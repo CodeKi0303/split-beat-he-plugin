@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import StrictFloat, StrictInt
 
 from .client import DeviceError
+from .default_bindings import default_bindings
 from .hall_curve import curve_catalog
 from .protocol import (
     CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, ProtocolError, binding_record, integer, key_record,
@@ -240,8 +241,15 @@ def make_studio_profile(profile, travel_mm):
                 ui={"totalTravelMm": validate_travel(travel_mm)})
 
 
-def layout():
-    """Physical positions from web/layout.mjs; labels never imply current mappings."""
+def layout(profile=None, *, mapping_source=None, status=None, demo=False):
+    """Describe a supplied mapping or explicitly marked, offline defaults.
+
+    Physical IDs and references are stable. Current names come only from the
+    supplied complete profile; missing/disabled mappings never fall back to defaults.
+    """
+    profile = validate_profile(profile) if profile is not None else None
+    bindings = profile["bindings"] if profile is not None else default_bindings()
+    source = mapping_source or ("provided_profile" if profile is not None else "packaged_defaults")
     inputs = []
     for side in (0, 1):
         for index, name in enumerate(POSITION_NAMES):
@@ -266,9 +274,67 @@ def layout():
         inputs.append(dict(input=index, side=side, type=kind, position=name,
                            label=("왼쪽" if side == 0 else "오른쪽") + f" {name}",
                            source_ref=ref, direction=direction, supports_rt=False))
+    labels = [binding_label(binding) for binding in bindings]
+    for item in inputs:
+        index = item["input"]
+        item["physical_position"] = item["position"]
+        item["physical_label"] = item["label"]
+        item["current_binding"] = deepcopy(bindings[index]) if profile is not None else None
+        if profile is None:
+            item["default_binding"] = deepcopy(bindings[index])
+        item["binding_label"] = labels[index]
+        item["label"] = ("왼쪽" if item["side"] == 0 else "오른쪽") + " " + labels[index]
+        if profile is None:
+            item["label"] += " (기본값 · 장치 미확인)"
+        matches = [i for i, label in enumerate(labels) if label == labels[index]]
+        item["same_binding_inputs"] = matches
+        item["binding_ambiguous"] = len(matches) > 1
+    dirty = status.get("dirty") if status else None
+    stored_valid = status.get("stored_valid") if status else None
+    persistence = ("not_device_state" if profile is None else
+                   "active_ram_unsaved" if dirty is True else
+                   "active_ram_matches_saved" if dirty is False and stored_valid is True else
+                   "active_ram_not_persisted" if stored_valid is False else "unknown")
     return dict(inputs=sorted(inputs, key=lambda item: item["input"]),
                 hall_count=14, input_count=28, sides={"0": "left", "1": "right"},
-                note="Position names follow web/layout.mjs, not current HID mappings. Right side positions are mirrored. Encoder CW/CCW is electrical decoding; verify desired physical direction on your device.")
+                mapping_source=source, demo=demo, dirty=dirty, stored_valid=stored_valid,
+                persistence=persistence, fingerprint=profile_fingerprint(profile) if profile is not None else None,
+                note="Use binding_label/current_binding to identify requested keys. Duplicate names require side, input type/direction or input ID. physical_position/physical_label/source_ref describe fixed PCB positions only, never the active key name. RAM is saved only when dirty=false and stored_valid=true. Demo state is simulation. Disconnected defaults are not current hardware state. Encoder CW/CCW is electrical decoding; verify physical direction on the device.")
+
+
+def session_layout(session):
+    """Read the explicitly connected client only; never connect or write."""
+    if session.client is None:
+        return layout()
+    client = session.require_client()
+    profile = client.get_config()
+    status = client.status(0)
+    demo = bool(client.transport.demo)
+    return layout(profile, mapping_source="demo_ram" if demo else "device_ram", status=status, demo=demo)
+
+
+def binding_label(binding):
+    """Name all supported bindings using the tool's existing HID catalog."""
+    binding = binding_record(binding)
+    catalog = binding_catalog()
+    kind = binding["kind"]
+    if kind == 0:
+        return "미지정"
+    if kind in (1, 6):
+        names = {item["code"]: item["name"] for item in catalog["named_keyboard_usages"]}
+        parts = [item["name"] for item in catalog["modifiers"] if binding["modifiers"] & item["bit"]]
+        for code in binding["keys"] if kind == 6 else [binding["code"]]:
+            if code:
+                name = names.get(code, f"HID 0x{code:02X}")
+                if name not in parts:
+                    parts.append(name)
+        return " + ".join(parts) or "미지정"
+    if kind in (2, 3):
+        return ("Scroll " + ("Up" if binding["code"] == 1 else "Down") if kind == 2 else
+                "Scroll " + ("Right" if binding["code"] == 1 else "Left"))
+    options = catalog["media" if kind == 4 else "mouse_buttons"]
+    name = next(item["name"] for item in options if item["code"] == binding["code"])
+    return name if kind == 4 else "Mouse " + name
 
 
 def binding_catalog():
@@ -352,8 +418,8 @@ def register_configuration_tools(server, session, read, write, guard):
     @server.tool(annotations=read, structured_output=True)
     @guard
     def keyboard_layout() -> dict[str, Any]:
-        """List the exact 28 input IDs/physical positions and the 14 Hall RT-capable keys. Does not need a connected device."""
-        return layout()
+        """Read current RAM mappings and dirty/saved state from the connected device, with named bindings and stable physical IDs. Resolve requests by binding_label, side and type; duplicate names require disambiguation. Disconnected: marked packaged defaults only, no USB access. Demo is simulation. Never connects or writes."""
+        return session_layout(session)
 
     @server.tool(annotations=read, structured_output=True)
     @guard

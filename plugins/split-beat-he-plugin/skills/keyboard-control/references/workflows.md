@@ -4,7 +4,7 @@ Use live tool schemas for parameter names and bounds. These steps describe the n
 
 ## Batch Hall calibration
 
-1. Identify the requested Hall keys using `keyboard_layout`. Explain that the user must release every key for the baseline, then press each selected key fully. Wait for readiness if their hands are not known to be clear.
+1. Read a fresh connected `keyboard_layout` and `keyboard_get_config`, then identify the requested Hall keys by their current mapped label, side and Hall input ID. Disambiguate duplicate bindings before instructing a press; never substitute legacy Q/W physical labels. Repeat the lookup after any remap. Explain that the user must release every key for the baseline, then press each selected key fully. Wait for readiness if their hands are not known to be clear.
 2. Start `keyboard_batch_calibration_start`. Its initial three seconds collect the released baseline; afterward the background job records presses. Poll `keyboard_batch_calibration_status` and report which keys have valid captures. Do not interpret idle noise as a completed press or claim an unpressed key is calibrated.
 3. The user may press keys in any order. Apply valid requested captures with `keyboard_batch_calibration_apply`; leave uncaptured keys unchanged. Cancel with `keyboard_batch_calibration_cancel` if physical conditions were wrong. Capture is bounded, so inspect the final state if it expires.
 4. Verify the returned/read-back endpoints. Save and restore/enable output only to the extent requested. Total stroke remains a separate physical input; two endpoints do not establish the travel curve's physical linearity.

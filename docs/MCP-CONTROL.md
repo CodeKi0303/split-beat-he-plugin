@@ -54,6 +54,12 @@ MCP 클라이언트가 도구 이름 앞에 서버 이름을 붙일 수 있습�
 | 앱 업데이트 | `keyboard_firmware_inspect`, `keyboard_firmware_update` |
 | 시뮬레이션 포즈 | `keyboard_demo_pose` — 데모 전용 |
 
+키를 지칭하거나 보정·측정을 위해 눌러 달라고 안내하기 전에 연결된 장치의 `keyboard_layout`과 `keyboard_get_config`를 새로 읽습니다. 안내는 현재 매핑의 `binding_label`/`label`(예: **왼쪽 A**)을 사용하고, 매핑을 바꾸면 다시 읽습니다. `physical_position`/`physical_label`의 Q/W 등은 PCB 위치를 설명하는 보조 식별자입니다. 같은 이름이 여러 입력에 있으면 좌우, Hall/MX/노브/롤러 종류와 회전 방향 또는 input ID로 먼저 구분합니다. 예를 들어 Enter는 오른쪽 Hall과 노브 클릭에, F1은 왼쪽 MX와 롤러 방향에 각각 존재합니다. Right Alt의 `code=0, modifiers=64`도 유효한 매핑입니다.
+
+연결 시 `current_binding`은 현재 RAM 값이며 `dirty=true`이면 **활성 매핑·미저장**입니다. `dirty=false`와 `stored_valid=true`를 함께 확인한 경우에만 저장된 상태로 설명합니다. 연결하지 않은 `keyboard_layout`은 `mapping_source=packaged_defaults`, `current_binding=null`인 기본값 안내일 뿐 실물 상태가 아닙니다. 데모는 별도로 표시합니다. 이름 확인을 위해 자동 연결·초기화·프로필 덮어쓰기를 하지 않습니다.
+
+초기 매핑 28개는 루트 `default-bindings.json`에 고정하며, Python 배포물의 `host/default-bindings.json`과 빌드 시 대조합니다. 2026-11-13 저장 장치에서 **매핑만** 가져온 기준값이며 보정·RT·데드존·스트로크나 장치 식별자는 포함하지 않습니다. 기존 장치 설정과 사용자가 저장한 프로필은 그대로 유지됩니다.
+
 키 위치는 `keyboard_layout`에서 확인합니다. 입력은 Hall 14개, 일반 접점·클릭 6개, 인코더 방향 8개입니다. 작동점·RT·데드존은 Hall 키에만 적용합니다. 키보드 usage, 조합키, 마우스 5버튼, 세로/가로 스크롤, 지원 미디어 키는 카탈로그로 찾을 수 있습니다. 임의 문자열 매크로 실행이나 운영체제 키 입력 기록 도구는 제공하지 않습니다.
 
 ## 설정이 적용되는 범위

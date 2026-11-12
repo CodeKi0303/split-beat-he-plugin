@@ -29,6 +29,7 @@ def pack_claude(staging, manifest, output):
         shutil.copyfile(ROOT / name, bundle / name)
     for source in (ROOT / "host").glob("*.py"):
         shutil.copyfile(source, bundle / "host" / source.name)
+    shutil.copyfile(ROOT / "host/default-bindings.json", bundle / "host/default-bindings.json")
     if not (bundle / manifest["server"]["entry_point"]).is_file():
         raise ValueError("Claude extension entry point is missing")
     npx = shutil.which("npx")
@@ -42,6 +43,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--marketplace", action="store_true", help="Refresh the wheel bundled in the repository marketplace")
     args = parser.parse_args()
+    baseline = (ROOT / "default-bindings.json").read_bytes()
+    if (ROOT / "host/default-bindings.json").read_bytes() != baseline:
+        raise ValueError("Packaged host defaults differ from canonical default-bindings.json")
     manifest = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))
     config = json.loads((PLUGIN / "mcp.json").read_text(encoding="utf-8"))
     server = config["mcpServers"]["split_keyboard"]
@@ -59,6 +63,9 @@ def main():
         wheel = staging / wheel_name
         if not wheel.is_file():
             raise ValueError(f"Plugin MCP configuration expects {wheel_name}")
+        with ZipFile(wheel) as package:
+            if package.read("split_beat_he_mcp/default-bindings.json") != baseline:
+                raise ValueError("Wheel default bindings are missing or differ from canonical data")
         archive = staging / archive_name
         with ZipFile(archive, "w", ZIP_DEFLATED) as package:
             for name in COMPONENTS:
@@ -68,6 +75,9 @@ def main():
 
         mcpb = staging / f"{manifest['name']}-{manifest['version']}.mcpb"
         pack_claude(staging, claude, mcpb)
+        with ZipFile(mcpb) as package:
+            if package.read("host/default-bindings.json") != baseline:
+                raise ValueError("Claude bundle default bindings differ from canonical data")
         if args.marketplace:
             (PLUGIN / "server").mkdir(exist_ok=True)
             shutil.copyfile(wheel, PLUGIN / "server" / wheel.name)
