@@ -13,6 +13,15 @@ CAP_ADC_IRQ_PROFILE = 0x1000
 CAP_KEY_CHORD = 0x2000
 CAP_SAVE_OUTPUT = 0x4000
 CAP_RETRIGGER_BEFORE_RELEASE = 0x40000
+CAP_FINE_TRAVEL = 0x80000
+# Normalized travel used by every host function. Firmware 0.3.43+ (capability
+# 0x80000) speaks it on the wire; earlier firmware uses 0..1000, so the client
+# converts at the device boundary. One unit is 1/10000 of the switch stroke,
+# fine enough for 0.001 mm entry; it is not the sensor's physical resolution.
+TRAVEL_MAX = 10000
+LEGACY_TRAVEL_MAX = 1000
+LEGACY_TRAVEL_SCALE = TRAVEL_MAX // LEGACY_TRAVEL_MAX
+TRAVEL_FIELDS = ("actuation", "rt_press", "rt_release", "top_deadzone", "bottom_deadzone")
 INFO, STATUS, GET_KEY, SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, GET_BINDING, SET_BINDING = range(1, 11)
 MUTATIONS = {SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, SET_BINDING}
 STATUSES = ["OK", "BAD_COMMAND", "BAD_PACKET", "BAD_INDEX", "BAD_CONFIG", "BUSY", "CALIBRATION_INVALID", "NOT_READY", "STORAGE_ERROR"]
@@ -77,9 +86,9 @@ def key_record(value):
     for k in ("released", "pressed"):
         integer(d[k], 0, 4095, k)
     for k in ("actuation", "rt_press", "rt_release"):
-        integer(d[k], 1, 1000, k)
+        integer(d[k], 1, TRAVEL_MAX, k)
     integer(d["top_deadzone"], 0, d["actuation"]-1, "top_deadzone")
-    integer(d["bottom_deadzone"], 0, 1000-d["actuation"], "bottom_deadzone")
+    integer(d["bottom_deadzone"], 0, TRAVEL_MAX-d["actuation"], "bottom_deadzone")
     integer(d["noise_deadband"], 0, 100, "noise_deadband")
     integer(d["curve_id"], 0, 1, "curve_id")
     if d["flags"] & 4 and abs(d["pressed"]-d["released"]) < 128:
@@ -87,18 +96,30 @@ def key_record(value):
     return d
 
 
-def encode_key(value):
+def encode_key(value, legacy=False):
+    """legacy=True encodes for firmware without CAP_FINE_TRAVEL (0..1000 units)."""
     d = key_record(value)
+    if legacy:
+        for k in TRAVEL_FIELDS:
+            if d[k] % LEGACY_TRAVEL_SCALE:
+                raise ProtocolError(f"{k}: this firmware stores 1/1000 of the stroke; 0.001 mm steps need firmware 0.3.43+ (capability 0x80000); no device mutation performed")
+            d[k] //= LEGACY_TRAVEL_SCALE
     return struct.pack("<BB10H", *(d[k] for k in KEY_FIELDS), 0)
 
 
-def decode_key(data):
+def decode_key(data, legacy=False):
     if len(data) != 22:
         raise ProtocolError("key reply length")
     v = struct.unpack("<BB10H", data)
     if v[-1]:
         raise ProtocolError("key reserved bytes")
-    return key_record(dict(zip(KEY_FIELDS, v)))
+    d = dict(zip(KEY_FIELDS, v))
+    if legacy:
+        if any(d[k] > LEGACY_TRAVEL_MAX for k in TRAVEL_FIELDS):
+            raise ProtocolError("legacy key record outside 0..1000")
+        for k in TRAVEL_FIELDS:
+            d[k] *= LEGACY_TRAVEL_SCALE
+    return key_record(d)
 
 
 def require_key_capability(key, capabilities):
@@ -176,19 +197,37 @@ def decode_binding(data):
 
 
 def validate_profile(profile):
-    if not isinstance(profile, dict) or set(profile) != {"schema", "board", "keys", "bindings"}:
-        raise ProtocolError("profile fields must be schema, board, keys, bindings")
+    """Profiles carry travel_max=10000. Older exports without it hold 0..1000
+    thresholds and are converted, so each threshold keeps its stroke fraction."""
+    base = {"schema", "board", "keys", "bindings"}
+    if not isinstance(profile, dict) or set(profile) not in (base, base | {"travel_max"}):
+        raise ProtocolError("profile fields must be schema, board, keys, bindings and optional travel_max")
     if profile["schema"] != "c77-profile-v1" or profile["board"] != "C77":
         raise ProtocolError("unsupported profile version/board")
     if not isinstance(profile["keys"], list) or len(profile["keys"]) != 14:
         raise ProtocolError("exactly 14 Hall keys required")
     if not isinstance(profile["bindings"], list) or len(profile["bindings"]) != 28:
         raise ProtocolError("exactly 28 bindings required")
-    keys = [key_record(k) for k in profile["keys"]]
+    scale = profile.get("travel_max", LEGACY_TRAVEL_MAX)
+    if type(scale) is not int or scale not in (LEGACY_TRAVEL_MAX, TRAVEL_MAX):
+        raise ProtocolError("travel_max must be 10000 (or absent for an older 0..1000 profile)")
+    raw_keys = profile["keys"]
+    if scale == LEGACY_TRAVEL_MAX:
+        raw_keys = []
+        for k in profile["keys"]:
+            if not isinstance(k, dict):
+                raise ProtocolError("key record fields do not match schema")
+            k = dict(k)
+            for name in TRAVEL_FIELDS:
+                if name in k:
+                    integer(k[name], 0, LEGACY_TRAVEL_MAX, name)
+                    k[name] *= LEGACY_TRAVEL_SCALE
+            raw_keys.append(k)
+    keys = [key_record(k) for k in raw_keys]
     bindings = [binding_record(b) for b in profile["bindings"]]
     if sorted(k["key"] for k in keys) != list(range(14)) or sorted(b["input"] for b in bindings) != list(range(28)):
         raise ProtocolError("duplicate or missing indices")
-    return dict(schema="c77-profile-v1", board="C77", keys=sorted(keys, key=lambda k:k["key"]), bindings=sorted(bindings, key=lambda b:b["input"]))
+    return dict(schema="c77-profile-v1", board="C77", travel_max=TRAVEL_MAX, keys=sorted(keys, key=lambda k:k["key"]), bindings=sorted(bindings, key=lambda b:b["input"]))
 
 
 def decode_info(p):
@@ -203,7 +242,7 @@ def decode_info(p):
     return d
 
 
-def decode_status(p):
+def decode_status(p, legacy=False):
     if len(p) != 54:
         raise ProtocolError("status reply length")
     up, seq, errors, age = struct.unpack_from("<4I", p)
@@ -211,6 +250,8 @@ def decode_status(p):
     travel = list(struct.unpack_from("<7H", p, 30))
     digital, flags, key, state = struct.unpack_from("<4B", p, 44)
     pressed, reserved = struct.unpack_from("<IH", p, 48)
-    if reserved or any(v > 4095 for v in raw) or any(v > 1000 for v in travel):
+    if reserved or any(v > 4095 for v in raw) or any(v > (LEGACY_TRAVEL_MAX if legacy else TRAVEL_MAX) for v in travel):
         raise ProtocolError("invalid telemetry")
+    if legacy:
+        travel = [v * LEGACY_TRAVEL_SCALE for v in travel]
     return dict(uptime_ms=up, sample_sequence=seq, errors=errors, link_age_us=age, raw=raw, travel=travel, digital_mask=digital, output_enabled=bool(flags&1), fresh=bool(flags&2), dirty=bool(flags&4), stored_valid=bool(flags&8), calibration_key=key, calibration_state=state, pressed_mask=pressed)

@@ -16,7 +16,7 @@ from .performance import (PERFORMANCE, LINK_PERFORMANCE, LINK_FIELDS, ADC_DIAGNO
                           ADC_IRQ_PROFILE, decode_adc_irq_profile_begin, decode_adc_irq_profile_page,
                           decode_performance, decode_link_performance, decode_adc_diagnostics,
                           compare_samples, delta32)
-from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE
+from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, CAP_FINE_TRAVEL, TRAVEL_MAX
 from .hall_curve import normalized_to_mm, raw_to_estimated_mm
 
 
@@ -143,7 +143,7 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
             seq = integer(status.get("sample_sequence"), 0, 0xffffffff, "sample_sequence")
             age = integer(status.get("link_age_us"), 0, 0xffffffff, "link_age_us")
             raw = integer(status["raw"][offset], 0, 4095, "raw")
-            travel = integer(status["travel"][offset], 0, 1000, "travel")
+            travel = integer(status["travel"][offset], 0, TRAVEL_MAX, "travel")
             mask = integer(status.get("pressed_mask"), 0, 0xffffffff, "pressed_mask")
         except (ValueError, IndexError, KeyError, TypeError):
             counts["invalid"] += 1
@@ -324,7 +324,7 @@ def read_adc_trace(client, keys):
     if demo or not capability_summary(info)["adc_trace"]:
         return {"supported": False, "demo": demo, **unchanged,
                 "reason": "Requires non-demo C86 left firmware with ADC trace capability 0x400; no trace command sent."}
-    snapshot = decode_adc_trace(client.request(ADC_TRACE, payload))
+    snapshot = decode_adc_trace(client.request(ADC_TRACE, payload), not info["capabilities"] & CAP_FINE_TRAVEL)
     if snapshot["keys"] != keys:
         raise DeviceError("ADC trace returned keys different from the requested order")
     for row in snapshot["rows"]:

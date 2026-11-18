@@ -9,6 +9,7 @@ import struct
 import time
 
 from .client import HidTransport, KeyboardClient
+from .protocol import LEGACY_TRAVEL_MAX, LEGACY_TRAVEL_SCALE, TRAVEL_MAX
 
 PERFORMANCE = 0x40
 LINK_PERFORMANCE = 0x41
@@ -83,8 +84,11 @@ def encode_adc_trace_keys(keys):
     return bytes(keys)
 
 
-def decode_adc_trace(payload):
-    """Preserve a synchronous trace, including valid but inconsistent averages."""
+def decode_adc_trace(payload, legacy=False):
+    """Preserve a synchronous trace, including valid but inconsistent averages.
+
+    Firmware 0.3.43+ packs travel 0..10000 in bits 0..13 (bit 14 zero, bit 15
+    pressed). legacy=True reads the older 0..1000 layout (bits 0..9) and scales it."""
     if not isinstance(payload, (bytes, bytearray, memoryview)) or len(payload) != 54:
         raise ValueError("ADC trace response must contain 54 bytes")
     sequence, timestamp, key_a, key_b = struct.unpack_from("<IIBB", payload)
@@ -96,11 +100,13 @@ def decode_adc_trace(payload):
         if any(value > 4095 for value in values[:10]):
             raise ValueError("ADC trace raw, averaged and deadband ADC values must be 12-bit")
         packed = values[10]
-        if (packed & 0x7c00) or (packed & 0x3ff) > 1000:
+        reserved, mask, limit = (0x7c00, 0x3ff, LEGACY_TRAVEL_MAX) if legacy else (0x4000, 0x3fff, TRAVEL_MAX)
+        if (packed & reserved) or (packed & mask) > limit:
             raise ValueError("ADC trace travel/reserved bits are invalid")
+        travel = (packed & mask) * (LEGACY_TRAVEL_SCALE if legacy else 1)
         rows.append({"key": key, "raw_history": list(values[:8]),
                      "averaged": values[8], "after_deadband": values[9],
-                     "travel": packed & 0x3ff, "pressed": bool(packed & 0x8000)})
+                     "travel": travel, "pressed": bool(packed & 0x8000)})
     return {"sample_sequence": sequence, "timestamp_us": timestamp,
             "keys": keys, "rows": rows}
 

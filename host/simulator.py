@@ -12,7 +12,7 @@ from .default_bindings import default_bindings
 
 
 def defaults():
-    return validate_profile(dict(schema="c77-profile-v1", board="C77", keys=[dict(key=i, flags=3, released=0, pressed=0, actuation=200, rt_press=100, rt_release=100, top_deadzone=20, noise_deadband=5) for i in range(14)], bindings=default_bindings()))
+    return validate_profile(dict(schema="c77-profile-v1", board="C77", keys=[dict(key=i, flags=3, released=0, pressed=0, actuation=2000, rt_press=1000, rt_release=1000, top_deadzone=200, noise_deadband=5) for i in range(14)], travel_max=TRAVEL_MAX, bindings=default_bindings()))
 
 
 class DemoTransport:
@@ -34,6 +34,9 @@ class DemoTransport:
         self.pressed_mask = 0
         self.retrigger_events = [0] * 14  # Sampled intent, not USB pulse/ACK emulation.
         self.pose = None  # Explicit demo control only; None preserves animated traces.
+        # Wire units follow the capability word actually sent in the last INFO,
+        # so tests that emulate firmware <=0.3.42 also get 0..1000 records.
+        self.wire_legacy = False
 
     def close(self):
         self.models.clear()
@@ -67,20 +70,22 @@ class DemoTransport:
             status, reply = 4, b""
         except RuntimeError:
             status, reply = 7, b""
+        if op == INFO and not status and len(reply) >= 20:
+            self.wire_legacy = not struct.unpack_from("<I", reply, 16)[0] & CAP_FINE_TRAVEL
         self.queue.append(packet(op | 0x80, seq, reply, status))
 
     def _command(self, op, p):
         if op == INFO:
             if p: raise ProtocolError("length")
             crc = zlib.crc32(b"".join(encode_key(k) for k in self.profile["keys"])+b"".join(encode_binding(b) for b in self.profile["bindings"]))
-            return struct.pack("<8B5IH4B", 0,3,22,0,14,6,4,28,64000,125,0x33f | CAP_KEY_CHORD | CAP_SAVE_OUTPUT | CAP_RETRIGGER_BEFORE_RELEASE, self.generation,crc,1024,86,1,2,bool(self.stored))
+            return struct.pack("<8B5IH4B", 0,3,22,0,14,6,4,28,64000,125,0x33f | CAP_KEY_CHORD | CAP_SAVE_OUTPUT | CAP_RETRIGGER_BEFORE_RELEASE | CAP_FINE_TRAVEL, self.generation,crc,1024,86,1,2,bool(self.stored))
         if op == STATUS:
             if len(p) != 1 or p[0] > 1: raise ProtocolError("side")
             elapsed = time.monotonic()-self.start
             raw = [1000+int((math.sin(elapsed+i+p[0]*7)+1)*1000) for i in range(7)]
-            if self.pose is not None:
-                raw = [1000 + 2*v for v in self.pose[p[0]*7:p[0]*7+7]]
-            travel = [(v-1000)//2 for v in raw]
+            if self.pose is not None:  # normalized 0..10000 -> ADC 1000..3000
+                raw = [1000 + v//5 for v in self.pose[p[0]*7:p[0]*7+7]]
+            travel = [(v-1000)*5 for v in raw]
             for offset, value in enumerate(raw):
                 key = self.profile["keys"][p[0] * 7 + offset]
                 if key["flags"] & 4:
@@ -97,20 +102,22 @@ class DemoTransport:
                     self.models.pop(key_id, None)
                     self.pressed_mask &= ~(1 << key_id)
             flags = int(self.enabled)|2|(int(self.dirty)<<2)|(int(self.stored is not None)<<3)
+            if self.wire_legacy:
+                travel = [(v + LEGACY_TRAVEL_SCALE // 2) // LEGACY_TRAVEL_SCALE for v in travel]
             return struct.pack("<4I14H4BIH", int(elapsed*1000),int(elapsed*64000),0,100,*raw,*travel,0,flags,self.cal["key"],self.cal["state"],self.pressed_mask,0)
         if op == GET_KEY:
             if len(p) != 1: raise ProtocolError("length")
-            return encode_key(self.profile["keys"][p[0]])
+            return encode_key(self.profile["keys"][p[0]], self.wire_legacy)
         if op == GET_BINDING:
             if len(p) != 1: raise ProtocolError("length")
             return encode_binding(self.profile["bindings"][p[0]])
         if op == SET_KEY:
-            d = decode_key(p)
+            d = decode_key(p, self.wire_legacy)
             self.profile["keys"][d["key"]] = d
             self.models.pop(d["key"], None)
             self.pressed_mask &= ~(1 << d["key"])
             self.enabled, self.dirty = False, True
-            return encode_key(d)
+            return encode_key(d, self.wire_legacy)
         if op == SET_BINDING:
             d = decode_binding(p)
             self.profile["bindings"][d["input"]] = d

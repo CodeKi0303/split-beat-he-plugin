@@ -1,5 +1,5 @@
 """Sampled RT state/event intent model; never emulates USB acknowledgements."""
-from .protocol import key_record
+from .protocol import TRAVEL_MAX, key_record
 from .hall_curve import normalized_from_raw
 
 
@@ -29,9 +29,9 @@ class SampledRT:
             self.pressed = travel >= c["actuation"]
             self.rapid = False
             self.extreme = travel
-        elif c["bottom_deadzone"] and travel >= 1000 - c["bottom_deadzone"]:
+        elif c["bottom_deadzone"] and travel >= TRAVEL_MAX - c["bottom_deadzone"]:
             self.pressed = self.rapid = True
-            self.extreme = 1000 - c["bottom_deadzone"]
+            self.extreme = TRAVEL_MAX - c["bottom_deadzone"]
         elif not self.rapid:
             if travel >= c["actuation"]:
                 self.pressed = self.rapid = True
@@ -48,7 +48,7 @@ class SampledRT:
                 self.extreme = travel
         # Event intent only: USB release/press completion is not sampled here.
         # Preserve the old held maximum, so ordinary release thresholds do not move.
-        bottom_hold = c["bottom_deadzone"] and travel >= 1000 - c["bottom_deadzone"]
+        bottom_hold = c["bottom_deadzone"] and travel >= TRAVEL_MAX - c["bottom_deadzone"]
         if (was_pressed and self.pressed and c["flags"] & 10 == 10
                 and travel > c["top_deadzone"] and not bottom_hold):
             if not self.trough_armed and travel < self.previous_travel:

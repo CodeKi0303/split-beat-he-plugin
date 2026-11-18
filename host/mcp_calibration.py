@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import StrictInt
 
 from .client import DeviceError
-from .protocol import integer, key_record
+from .protocol import TRAVEL_MAX, integer, key_record
 
 
 def key_selection(keys):
@@ -260,9 +260,9 @@ def register_calibration_tools(server, session, read, write, guard):
     @server.tool(annotations=write, structured_output=True)
     @guard
     def keyboard_demo_pose(keys: list[StrictInt], value: StrictInt) -> dict[str, Any]:
-        """Simulation only: hold selected Hall inputs at normalized0..1000 for calibration/diagnostic tests. First use initializes every demo key released. Never available for physical devices."""
+        """Simulation only: hold selected Hall inputs at normalized0..10000 for calibration/diagnostic tests. First use initializes every demo key released. Never available for physical devices."""
         selected = key_selection(keys)
-        integer(value, 0, 1000, "value")
+        integer(value, 0, TRAVEL_MAX, "value")
         client = session.require_client()
         if not client.transport.demo:
             raise ValueError("Demo pose cannot control physical sensors")

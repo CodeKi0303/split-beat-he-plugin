@@ -16,7 +16,7 @@ from host.simulator import DemoTransport, defaults
 
 def record(flags=15):
     return {**defaults()['keys'][0], 'flags': flags, 'released': 1000, 'pressed': 3000,
-            'noise_deadband': 0, 'rt_press': 50, 'rt_release': 200}
+            'noise_deadband': 0, 'rt_press': 500, 'rt_release': 2000}  # x10 travel per ADC offset below
 
 
 class RecordingTransport(DemoTransport):
@@ -125,7 +125,7 @@ class RetriggerTests(unittest.TestCase):
             model.step(1000 + travel * 2)
             events.append(model.retriggered)
         self.assertEqual(events, [False, False, False, False, True, False, False, False, True])
-        self.assertEqual(model.extreme, 600)
+        self.assertEqual(model.extreme, 6000)
         self.assertFalse(model.step(1000 + 399 * 2))
         self.assertFalse(model.retriggered)
         self.assertFalse(model.trough_armed)
@@ -136,7 +136,7 @@ class RetriggerTests(unittest.TestCase):
             for travel in (0, 400, 350, 400, 600, 550, 600):
                 model.step(1000 + 2 * travel)
                 self.assertFalse(model.retriggered)
-        model = SampledRT({**record(), 'bottom_deadzone': 100})
+        model = SampledRT({**record(), 'bottom_deadzone': 1000})
         for travel in (0, 950, 850, 900):
             model.step(1000 + 2 * travel)
             self.assertFalse(model.retriggered)
@@ -147,18 +147,18 @@ class RetriggerTests(unittest.TestCase):
     def test_demo_logical_state_and_event_intent_not_usb_ack(self):
         client, transport, _ = setup()
         client.set_key(record())
-        for travel in (0, 400, 350, 400):
+        for travel in (0, 4000, 3500, 4000):
             transport.pose[0] = travel
             status = client.status(0)
         self.assertTrue(status['pressed_mask'] & 1)
         self.assertEqual(transport.retrigger_events[0], 1)
-        transport.pose[0] = 700
+        transport.pose[0] = 7000
         client.status(0)
         self.assertEqual(transport.retrigger_events[0], 1)
-        transport.pose[0] = 650
+        transport.pose[0] = 6500
         client.status(0)
         client.set_key(record())  # Even identical settings reset pending trough state.
-        transport.pose[0] = 700
+        transport.pose[0] = 7000
         client.status(0)
         self.assertEqual(transport.retrigger_events[0], 1)
 

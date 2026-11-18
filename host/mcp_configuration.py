@@ -18,8 +18,8 @@ from .client import DeviceError
 from .default_bindings import default_bindings
 from .hall_curve import curve_catalog
 from .protocol import (
-    CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, ProtocolError, binding_record, integer, key_record,
-    require_binding_capability, require_key_capability, validate_profile,
+    CAP_FINE_TRAVEL, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, LEGACY_TRAVEL_SCALE, ProtocolError, TRAVEL_MAX,
+    binding_record, integer, key_record, require_binding_capability, require_key_capability, validate_profile,
 )
 
 DISTANCES = ("actuation", "rt_press", "rt_release", "top_deadzone", "bottom_deadzone")
@@ -54,12 +54,16 @@ def selected_keys(keys):
     return list(keys)
 
 
-def _millimetres(value, name):
+MM_STEP = Decimal("0.001")      # Hall setting input step (firmware 0.3.43+ units)
+STROKE_STEP = Decimal("0.01")   # total switch stroke metadata
+
+
+def _millimetres(value, name, step=MM_STEP):
     if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         raise ProtocolError(f"{name}: finite, nonnegative mm value required")
     decimal = Decimal(str(value))
-    if decimal != decimal.quantize(Decimal("0.01")):
-        raise ProtocolError(f"{name}: use 0.01 mm increments")
+    if decimal != decimal.quantize(step):
+        raise ProtocolError(f"{name}: use {step} mm increments")
     return decimal
 
 
@@ -85,7 +89,7 @@ def propose_keys(profile, keys, patch, *, unit="normalized", travel_mm=None, cap
             if unit == "mm":
                 _millimetres(patch[name], name)
             else:
-                integer(patch[name], 0, 1000, name)
+                integer(patch[name], 0, TRAVEL_MAX, name)
     proposed = []
     for key in ids:
         old = before["keys"][key]
@@ -95,14 +99,17 @@ def propose_keys(profile, keys, patch, *, unit="normalized", travel_mm=None, cap
         total = Decimal(str(travel[key]))
         if unit == "mm":
             values = {name: Decimal(str(patch[name])) if name in patch
-                      else Decimal(old[name]) * total / 1000 for name in DISTANCES}
+                      else Decimal(old[name]) * total / TRAVEL_MAX for name in DISTANCES}
             if any(values[name] > total for name in DISTANCES):
                 raise ProtocolError(f"Hall {key}: distance exceeds total travel {total} mm")
             if values["top_deadzone"] >= values["actuation"] or values["actuation"] + values["bottom_deadzone"] > total:
                 raise ProtocolError(f"Hall {key}: actuation must be deeper than top zone and above bottom zone")
+        # Firmware without CAP_FINE_TRAVEL stores 1/1000 of the stroke; round mm
+        # input to what it can hold instead of failing on a 0.001 mm request.
+        step = 1 if capabilities & CAP_FINE_TRAVEL else LEGACY_TRAVEL_SCALE
         for name in DISTANCES:
             if name in patch:
-                record[name] = (int((Decimal(str(patch[name])) * 1000 / total).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                record[name] = (int((Decimal(str(patch[name])) * TRAVEL_MAX / total / step).quantize(Decimal("1"), rounding=ROUND_HALF_UP)) * step
                                 if unit == "mm" else patch[name])
         if "noise_deadband" in patch:
             record["noise_deadband"] = patch["noise_deadband"]
@@ -435,7 +442,7 @@ def register_configuration_tools(server, session, read, write, guard):
         _write_permission(client)
         _not_calibrating(session, client)
         ids = selected_keys(keys)
-        value = float(_millimetres(total_travel_mm, "total_travel_mm"))
+        value = float(_millimetres(total_travel_mm, "total_travel_mm", STROKE_STEP))
         travel = validate_travel(session.travel_mm)
         for key in ids:
             travel[key] = value
@@ -446,14 +453,14 @@ def register_configuration_tools(server, session, read, write, guard):
     @server.tool(annotations=read, structured_output=True)
     @guard
     def keyboard_preview_keys(keys: list[StrictInt], patch: dict, unit: str = "normalized") -> dict[str, Any]:
-        """Preview a partial Hall-settings patch without writes. unit normalized(0..1000 integers) or mm(0.01 increments using session stroke). Return fingerprint for optimistic apply. Valid patch fields: actuation,rt_press,rt_release,top_deadzone,bottom_deadzone,noise_deadband,enabled,rapid_trigger,retrigger_before_release,curve_id(0 linear,1 approximate Owlab Ti HE). Nonzero curve requires capability0x200. retrigger_before_release is a strict boolean, needs capability0x40000 and sends release/press pulses while RT remains held, breaking long notes. See keyboard_curve_catalog."""
+        """Preview a partial Hall-settings patch without writes. unit normalized(0..10000 integers; multiples of10 on firmware before0.3.43) or mm(0.001 increments using session stroke; firmware before0.3.43 rounds to its 1/1000 stroke step). Return fingerprint for optimistic apply. Valid patch fields: actuation,rt_press,rt_release,top_deadzone,bottom_deadzone,noise_deadband,enabled,rapid_trigger,retrigger_before_release,curve_id(0 linear,1 approximate Owlab Ti HE). Nonzero curve requires capability0x200. retrigger_before_release is a strict boolean, needs capability0x40000 and sends release/press pulses while RT remains held, breaking long notes. See keyboard_curve_catalog."""
         client = session.require_client()
         original = client.get_config()
         info = client.info()
         proposed = propose_keys(original, keys, patch, unit=unit, travel_mm=session.travel_mm, capabilities=info["capabilities"])
         return dict(fingerprint=profile_fingerprint(original), proposed_keys=proposed,
                     proposed_options=[key_options(record) for record in proposed],
-                    effective_mm=[{"key": key["key"], **{field: key[field] * session.travel_mm[key["key"]] / 1000 for field in DISTANCES}} for key in proposed],
+                    effective_mm=[{"key": key["key"], **{field: key[field] * session.travel_mm[key["key"]] / TRAVEL_MAX for field in DISTANCES}} for key in proposed],
                     device_written=False, note="Only patched fields change; measured endpoints and mappings stay per key. Curve changes alter RT/AP distance behavior without automatically changing numeric thresholds; mm is a travel-scaled estimate.")
 
     @server.tool(annotations=write, structured_output=True)

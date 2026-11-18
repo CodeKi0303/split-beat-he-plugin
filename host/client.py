@@ -144,7 +144,7 @@ class KeyboardClient:
             if op == SET_BINDING:
                 require_binding_capability(decode_binding(payload), self.device_info["capabilities"])
             if op == SET_KEY:
-                require_key_capability(decode_key(payload), self.device_info["capabilities"])
+                require_key_capability(decode_key(payload, self.legacy_travel()), self.device_info["capabilities"])
             self.sequence = (self.sequence % 65535)+1
             seq = self.sequence
             try:
@@ -176,20 +176,32 @@ class KeyboardClient:
         self.identified = True
         return {**result, "demo": self.transport.demo, "write_enabled": self.write_enabled}
 
+    def legacy_travel(self):
+        """True for firmware <=0.3.42, which uses 0..1000 travel on the wire."""
+        with self.lock:
+            if not self.identified:
+                self.info()
+            return not self.device_info["capabilities"] & CAP_FINE_TRAVEL
+
     def status(self, side=0):
         integer(side, 0, 1, "side")
-        result = decode_status(self.request(STATUS, bytes([side])))
+        legacy = self.legacy_travel()
+        result = decode_status(self.request(STATUS, bytes([side])), legacy)
         self.output_enabled = result["output_enabled"]
         return {**result, "side": side, "demo": self.transport.demo}
 
     def get_config(self):
         with self.lock:
-            keys = [decode_key(self.request(GET_KEY, bytes([i]))) for i in range(14)]
+            legacy = self.legacy_travel()
+            keys = [decode_key(self.request(GET_KEY, bytes([i])), legacy) for i in range(14)]
             bindings = [decode_binding(self.request(GET_BINDING, bytes([i]))) for i in range(28)]
-            return validate_profile(dict(schema="c77-profile-v1", board="C77", keys=keys, bindings=bindings))
+            return validate_profile(dict(schema="c77-profile-v1", board="C77", travel_max=TRAVEL_MAX, keys=keys, bindings=bindings))
 
     def set_key(self, value):
-        return decode_key(self.request(SET_KEY, encode_key(value)))
+        with self.lock:
+            legacy = self.legacy_travel()
+            require_key_capability(key_record(value), self.device_info["capabilities"])
+            return decode_key(self.request(SET_KEY, encode_key(value, legacy)), legacy)
 
     def set_binding(self, value):
         return decode_binding(self.request(SET_BINDING, encode_binding(value)))
@@ -221,6 +233,8 @@ class KeyboardClient:
             info = self.info()
             for key in profile["keys"]:
                 require_key_capability(key, info["capabilities"])
+                if not info["capabilities"] & CAP_FINE_TRAVEL:
+                    encode_key(key, True)  # Preflight: reject 0.001 mm steps before any write.
             for binding in profile["bindings"]:
                 require_binding_capability(binding, info["capabilities"])
             self.output(False)

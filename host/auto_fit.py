@@ -5,7 +5,7 @@ from copy import deepcopy
 import math
 
 from .hall_curve import normalized_from_raw
-from .protocol import key_record
+from .protocol import TRAVEL_MAX, key_record
 from .sampled_rt import SampledRT
 
 PHASES = ("released", "resting", "tapping", "holding")
@@ -105,15 +105,16 @@ def prepare(value):
         if rows[-1]["timeMs"] - rows[0]["timeMs"] < 2000:
             raise ValueError(f"{name}를 2초 이상 측정하세요.")
     released = [row["depth"] for row in records["released"]]
-    if quantile(released, .95) > 80:
+    # Depth thresholds are in 0..10000 travel units (1/10000 of the stroke).
+    if quantile(released, .95) > 800:
         raise ValueError("손 떼기 기록이 보정된 시작 위치에서 멉니다. 손을 완전히 떼고 다시 측정하세요.")
     released_max = max(released)
     rest_max = max(released_max, max(row["depth"] for row in records["resting"]))
-    margin = max(6, math.ceil((released_max - min(released)) * 1.5))
+    margin = max(60, math.ceil((released_max - min(released)) * 1.5))
     taps = [row["depth"] for row in records["tapping"]]
     tap_low, tap_high = quantile(taps, .1), quantile(taps, .9)
     amplitude = tap_high - tap_low
-    if amplitude < max(100, margin * 4):
+    if amplitude < max(1000, margin * 4):
         raise ValueError("반복 입력의 움직임을 구분하기 어렵습니다. 키를 충분히 눌렀다 놓으며 다시 측정하세요.")
     cycles = find_cycles(records["tapping"], tap_low + amplitude * .25, tap_low + amplitude * .65)
     if len(cycles) < 6:
@@ -124,7 +125,7 @@ def prepare(value):
     holds = records["holding"]
     interior = [row for row in holds if holds[0]["timeMs"] + 250 <= row["timeMs"] <= holds[-1]["timeMs"] - 250]
     hold_depths = [row["depth"] for row in interior]
-    if quantile(hold_depths, .1) < rest_max + max(80, margin * 3):
+    if quantile(hold_depths, .1) < rest_max + max(800, margin * 3):
         raise ValueError("길게 누르기 기록에서 키가 충분히 눌리지 않았습니다. 누른 상태를 유지하며 다시 측정하세요.")
     peak, retreat = hold_depths[0], 0
     for current in hold_depths:
@@ -179,7 +180,7 @@ def has_observed(data):
 def describe(config, data):
     return dict(config=config, label="래피드 트리거 사용" if config["flags"] & 2 else "고정 작동점 사용",
                 metrics=metrics(config, data),
-                mm={field: rounded(config[field] * data["totalTravelMm"] / 1000) for field in DISTANCES})
+                mm={field: rounded(config[field] * data["totalTravelMm"] / TRAVEL_MAX) for field in DISTANCES})
 
 
 def evaluate_auto_fit(config, value):
@@ -200,7 +201,7 @@ def analyze_auto_fit(value):
         data = prepare(value)
         config, preference, e = data["config"], data["preference"], data["evidence"]
         baseline = describe(config, data)
-        top = clamp(e["releasedMax"] + e["noiseMargin"], 0, 998)
+        top = clamp(e["releasedMax"] + e["noiseMargin"], 0, TRAVEL_MAX - 2)
         low = max(top + 1, e["restMax"] + e["noiseMargin"])
         span = e["minimumTapPeak"] - low
         target_actuation = low + span * dict(balanced=.35, repeat=.2, hold=.4)[preference]
@@ -208,9 +209,9 @@ def analyze_auto_fit(value):
         target_release = max(e["noiseMargin"], e["holdRetreat"] + e["noiseMargin"] + e["tapAmplitude"] * dict(balanced=.08, repeat=.03, hold=.15)[preference])
         actuations = [v for v in unique([low, low + span * .2, low + span * .35, low + span * .5, target_actuation, config["actuation"]])
                       if top < v < e["minimumTapPeak"]]
-        presses = [clamp(v, 1, 1000) for v in unique([e["noiseMargin"], target_press, e["tapAmplitude"] * .15, config["rt_press"]])]
-        releases = [clamp(v, 1, 1000) for v in unique([e["noiseMargin"], target_release, e["holdRetreat"] + e["noiseMargin"], e["tapAmplitude"] * .25, config["rt_release"]])]
-        bottoms = unique([0, config["bottom_deadzone"], min(200, 1000 - e["holdMinimum"] + e["noiseMargin"]) if e["holdMinimum"] >= 800 else 0])
+        presses = [clamp(v, 1, TRAVEL_MAX) for v in unique([e["noiseMargin"], target_press, e["tapAmplitude"] * .15, config["rt_press"]])]
+        releases = [clamp(v, 1, TRAVEL_MAX) for v in unique([e["noiseMargin"], target_release, e["holdRetreat"] + e["noiseMargin"], e["tapAmplitude"] * .25, config["rt_release"]])]
+        bottoms = unique([0, config["bottom_deadzone"], min(2000, TRAVEL_MAX - e["holdMinimum"] + e["noiseMargin"]) if e["holdMinimum"] >= 8000 else 0])
         candidates = [baseline]
         for actuation in actuations:
             candidates.append(describe({**config, "flags": config["flags"] & ~2, "actuation": actuation,
@@ -218,7 +219,7 @@ def analyze_auto_fit(value):
             for press in presses:
                 for release in releases:
                     for bottom in bottoms:
-                        if bottom <= 1000 - actuation:
+                        if bottom <= TRAVEL_MAX - actuation:
                             candidates.append(describe({**config, "flags": config["flags"] | 2, "actuation": actuation,
                                                         "rt_press": press, "rt_release": release,
                                                         "top_deadzone": top, "bottom_deadzone": bottom}, data))
@@ -229,9 +230,9 @@ def analyze_auto_fit(value):
         def score(candidate):
             c, m = candidate["config"], candidate["metrics"]
             errors = m["restActivations"] * 8 + m["holdDrops"] * 8 + m["holdUnpressedFraction"] * 8 + m["missedTaps"] * 4 + m["missedReleases"] * 4 + m["extraTaps"] * 6
-            fit = abs(c["actuation"] - target_actuation) / 1000
-            fit += (abs(c["rt_press"] - target_press) + abs(c["rt_release"] - target_release)) / 3000 if c["flags"] & 2 else dict(balanced=.08, repeat=.15, hold=0)[preference]
-            return errors * 1000 + fit + c["bottom_deadzone"] / 100000
+            fit = abs(c["actuation"] - target_actuation) / TRAVEL_MAX
+            fit += (abs(c["rt_press"] - target_press) + abs(c["rt_release"] - target_release)) / (3 * TRAVEL_MAX) if c["flags"] & 2 else dict(balanced=.08, repeat=.15, hold=0)[preference]
+            return errors * 1000 + fit + c["bottom_deadzone"] / (100 * TRAVEL_MAX)
 
         safe.sort(key=score)
         best = safe[0]

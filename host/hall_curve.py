@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import math
 
+from .protocol import TRAVEL_MAX
+
 CURVE_LINEAR = 0
 CURVE_OWLAB_TI_REFERENCE = 1
 OW_TI_SIGNAL = (0, 467, 1211, 2244, 3667, 5644, 8500, 10000)
@@ -35,25 +37,25 @@ def normalized_from_raw(raw, released, pressed, curve_id=0):
     if distance <= 0:
         return 0
     if distance >= span:
-        return 1000
+        return TRAVEL_MAX
     if curve_id == CURVE_LINEAR:
-        return (distance * 1000 + span // 2) // span
+        return (distance * TRAVEL_MAX + span // 2) // span
     signal = (distance * 10000 + span // 2) // span
     for index in range(1, len(OW_TI_SIGNAL)):
         if signal <= OW_TI_SIGNAL[index]:
             x0, x1 = OW_TI_SIGNAL[index - 1:index + 1]
             y0, y1 = OW_TI_REFERENCE_DISTANCE[index - 1:index + 1]
             y = y0 + ((signal - x0) * (y1 - y0) + (x1 - x0) // 2) // (x1 - x0)
-            return (y * 1000 + 16500) // 33000
-    return 1000
+            return (y * TRAVEL_MAX + 16500) // 33000
+    return TRAVEL_MAX
 
 
 def normalized_to_mm(travel, total_travel_mm):
     """Device STATUS travel is already curve-corrected: scale once, never LUT twice."""
-    _integer(travel, 0, 1000, "travel")
+    _integer(travel, 0, TRAVEL_MAX, "travel")
     if type(total_travel_mm) not in (int, float) or not math.isfinite(total_travel_mm) or not .1 <= total_travel_mm <= 10:
         raise ValueError("total_travel_mm must be finite and 0.10..10.00")
-    return travel * total_travel_mm / 1000
+    return travel * total_travel_mm / TRAVEL_MAX
 
 
 def raw_to_estimated_mm(raw, key_config, total_travel_mm):
@@ -75,7 +77,7 @@ def curve_catalog():
              "signal_nodes": list(OW_TI_SIGNAL),
              "reference_distance_nodes": list(OW_TI_REFERENCE_DISTANCE)},
         ],
-        "scaling": "Estimated mm = corrected normalized travel * per-key total_travel_mm / 1000. Other strokes keep the same approximate curve shape.",
+        "scaling": "Estimated mm = corrected normalized travel (0..10000) * per-key total_travel_mm / 10000. Other strokes keep the same approximate curve shape.",
         "limits": "Reference curve is not a measured C86 transfer function. Different switch magnets and board geometry can change the curve; proportional scaling does not establish physical mm accuracy. Preserve per-key measured ADC endpoints.",
         "selection": "Use keyboard_preview_keys / keyboard_set_keys patch {curve_id: 1}; set total stroke separately with keyboard_set_travel_mm. No automatic profile selection or firmware update.",
     }
