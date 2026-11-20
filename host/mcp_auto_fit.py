@@ -10,7 +10,7 @@ from pydantic import StrictBool, StrictFloat, StrictInt
 from .auto_fit import analyze_auto_fit, evaluate_auto_fit
 from .client import DeviceError
 from .mcp_configuration import apply_records, profile_fingerprint
-from .mcp_diagnostics import capture_key_timing
+from .mcp_diagnostics import capture_key_timing, device_custom_curve
 from .protocol import integer, key_record, require_key_capability
 
 PHASES = {
@@ -44,6 +44,7 @@ class AutoFitSession:
                 raise PermissionError("Output is enabled. Disable it in Studio or restart MCP with --write-enabled")
             if client.output(False) != {"output_enabled": False}:
                 raise DeviceError("Output-off acknowledgement mismatch")
+        custom_curve = device_custom_curve(client, [config])
         if client.get_config() != profile:
             raise DeviceError("Configuration changed while preparing automatic fitting")
         self.client = client
@@ -53,6 +54,8 @@ class AutoFitSession:
         self.fingerprint = profile_fingerprint(profile)
         self.input = dict(keyConfig=deepcopy(config), totalTravelMm=float(total_travel_mm),
                           preference=preference, phases={})
+        if custom_curve is not None:
+            self.input["customCurve"] = list(custom_curve)
         self.active = True
         self.result = None
         self.applied = False
@@ -69,6 +72,8 @@ class AutoFitSession:
             raise DeviceError("Device identity or firmware changed. Begin a new automatic fitting session")
         if profile_fingerprint(client.get_config()) != self.fingerprint:
             raise DeviceError("Configuration changed since measurement. Begin a new automatic fitting session")
+        if "customCurve" in self.input and client.custom_curve() != self.input["customCurve"]:
+            raise DeviceError("The custom curve table changed since measurement. Begin a new automatic fitting session")
         return client
 
     def snapshot(self):

@@ -4,8 +4,9 @@ from .hall_curve import normalized_from_raw
 
 
 class SampledRT:
-    def __init__(self, config):
+    def __init__(self, config, custom_curve=None):
         self.config = key_record(config)
+        self.custom_curve = custom_curve
         if self.config["flags"] & 5 != 5 or abs(config["pressed"] - config["released"]) < 128:
             raise ValueError("활성화된 Hall 키를 먼저 캘리브레이션하세요.")
         self.filtered = None
@@ -19,7 +20,7 @@ class SampledRT:
         c = self.config
         if self.filtered is None or abs(raw - self.filtered) >= c["noise_deadband"]:
             self.filtered = raw
-        travel = normalized_from_raw(self.filtered, c["released"], c["pressed"], c.get("curve_id", 0))
+        travel = normalized_from_raw(self.filtered, c["released"], c["pressed"], c.get("curve_id", 0), self.custom_curve)
         was_pressed = self.pressed
         self.retriggered = False
         if not c["flags"] & 1 or travel <= c["top_deadzone"]:

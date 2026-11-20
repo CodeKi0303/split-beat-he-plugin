@@ -134,13 +134,24 @@ class KeyboardClient:
         # The dedicated FirmwareUpdater owns update permission and sequencing.
         # Even right-side update INFO changes relay/output state, so unknown
         # opcodes must never bypass the normal configuration mutation gate.
-        if type(op) is not int or not (1 <= op <= 10 or op in (0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46)):
+        if type(op) is not int or not (1 <= op <= 10 or 0x40 <= op <= CUSTOM_CURVE):
             raise ProtocolError("Unsupported configuration opcode; firmware updates require the dedicated updater")
-        if op in MUTATIONS and not self.write_enabled:
+        mutates = op in MUTATIONS or (op in (ADC_TUNING, ADC_PAIR, CUSTOM_CURVE) and bool(payload))
+        if mutates and not self.write_enabled:
             raise PermissionError("read-only session: restart with --write-enabled for configuration changes")
         with self.lock:
-            if op in MUTATIONS and not self.identified:
+            if (mutates or op in (ADC_TUNING, ADC_COMPARE, ADC_PAIR, TELEMETRY_CONTROL, TELEMETRY_READ, CUSTOM_CURVE)) and not self.identified:
                 self.info()
+            if op == CUSTOM_CURVE and not self.device_info["capabilities"] & CAP_CUSTOM_CURVE:
+                raise ProtocolError("This firmware does not support a custom Hall curve (0.3.46+)")
+            if op in (TELEMETRY_CONTROL, TELEMETRY_READ) and not self.device_info["capabilities"] & CAP_TELEMETRY:
+                raise ProtocolError("This firmware does not support input telemetry (C86 left v0.3.44+)")
+            if op in (ADC_TUNING, ADC_COMPARE) and not self.device_info["capabilities"] & CAP_ADC_TUNING:
+                raise ProtocolError("This firmware does not support ADC tuning")
+            if op == ADC_TUNING and payload and self.device_info["capabilities"] & CAP_ADC_PAIR_READ:
+                raise ProtocolError("ADC settings must be applied to both halves")
+            if op == ADC_PAIR and not self.device_info["capabilities"] & (CAP_ADC_PAIR if payload else CAP_ADC_PAIR_READ):
+                raise ProtocolError("This firmware does not support paired ADC tuning")
             if op == SET_BINDING:
                 require_binding_capability(decode_binding(payload), self.device_info["capabilities"])
             if op == SET_KEY:
@@ -162,7 +173,7 @@ class KeyboardClient:
                         continue
                     if status:
                         raise DeviceError(STATUSES[status] if status < len(STATUSES) else f"device status {status}")
-                    if op in MUTATIONS:
+                    if mutates:
                         self.output_enabled = False
                     return response
                 raise TimeoutError("HID transaction timed out; no automatic mutation retry")
@@ -189,6 +200,42 @@ class KeyboardClient:
         result = decode_status(self.request(STATUS, bytes([side])), legacy)
         self.output_enabled = result["output_enabled"]
         return {**result, "side": side, "demo": self.transport.demo}
+
+    def adc_tuning(self, rate=None, window=None, *, paired=False):
+        payload = b""
+        if rate is not None or window is not None:
+            if type(rate) is not int or rate not in ADC_SCAN_RATES or type(window) is not int or window not in ADC_WINDOWS[1:]:
+                raise ProtocolError("Unsupported ADC scan rate or averaging window")
+            payload = struct.pack("<IB", rate, window)
+        reply = self.request(ADC_PAIR if paired else ADC_TUNING, payload)
+        if len(reply) != 5:
+            raise ProtocolError("Invalid ADC tuning reply")
+        applied = struct.unpack("<IB", reply)
+        if applied[0] not in ADC_SCAN_RATES or applied[1] not in ADC_WINDOWS or (payload and applied != (rate, window)):
+            raise ProtocolError("ADC tuning readback mismatch")
+        return applied
+
+    def adc_compare(self, key):
+        integer(key, 0, 6, "left Hall key")
+        reply = self.request(ADC_COMPARE, bytes([key]))
+        if len(reply) != 12:
+            raise ProtocolError("Invalid ADC comparison reply")
+        actual, window, sequence, before, after, decision = struct.unpack("<BBIHHH", reply)
+        if actual != key or window not in ADC_WINDOWS[1:] or max(before, after, decision) > 4095:
+            raise ProtocolError("ADC comparison readback mismatch")
+        return {"window": window, "sequence": sequence, "before": before, "after": after, "decision": decision}
+
+    def custom_curve(self):
+        """The shared curve_id 2 table (15 outputs), read from device RAM."""
+        return list(decode_custom_curve(self.request(CUSTOM_CURVE)))
+
+    def set_custom_curve(self, points):
+        """RAM only, like SET_KEY: releases keys, turns output off, marks dirty."""
+        payload = encode_custom_curve(points)
+        reply = list(decode_custom_curve(self.request(CUSTOM_CURVE, payload)))
+        if reply != list(points):
+            raise ProtocolError("custom curve readback differs")
+        return reply
 
     def get_config(self):
         with self.lock:

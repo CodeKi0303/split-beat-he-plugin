@@ -4,12 +4,12 @@ codeki lab의 Split-Beat HE 키보드를 ChatGPT Desktop과 Claude Desktop에서
 
 ## ChatGPT Desktop에서 설치
 
-[저장소 ZIP](https://github.com/CodeKi0303/split-beat-he-plugin/archive/refs/tags/v0.1.5.zip)을 풀고 ChatGPT Desktop에서 해당 폴더를 프로젝트로 엽니다. 앱을 다시 시작한 뒤 Plugins 디렉터리의 **Split-Beat HE** 마켓플레이스에서 설치합니다. [OpenAI 설치 안내](https://developers.openai.com/plugins/build/plugins#install-a-local-plugin-manually).
+[저장소 ZIP](https://github.com/CodeKi0303/split-beat-he-plugin/archive/refs/tags/v0.1.6.zip)을 풀고 ChatGPT Desktop에서 해당 폴더를 프로젝트로 엽니다. 앱을 다시 시작한 뒤 Plugins 디렉터리의 **Split-Beat HE** 마켓플레이스에서 설치합니다. [OpenAI 설치 안내](https://developers.openai.com/plugins/build/plugins#install-a-local-plugin-manually).
 
 `uvx`가 PATH에 있어야 합니다. 첫 실행은 Python 의존성을 준비합니다. CLI를 사용할 경우 아래 두 명령으로 설치합니다.
 
 ```sh
-codex plugin marketplace add CodeKi0303/split-beat-he-plugin --ref v0.1.5
+codex plugin marketplace add CodeKi0303/split-beat-he-plugin --ref v0.1.6
 codex plugin add split-beat-he-plugin@split-beat-he
 ```
 
@@ -17,7 +17,7 @@ codex plugin add split-beat-he-plugin@split-beat-he
 
 ## Claude Desktop에서 설치
 
-1. [릴리스의 `.mcpb` 파일](https://github.com/CodeKi0303/split-beat-he-plugin/releases/download/v0.1.5/split-beat-he-plugin-0.1.5.mcpb)을 내려받습니다.
+1. [릴리스의 `.mcpb` 파일](https://github.com/CodeKi0303/split-beat-he-plugin/releases/download/v0.1.6/split-beat-he-plugin-0.1.6.mcpb)을 내려받습니다.
 2. Claude Desktop의 **Settings → Desktop app → Extensions → Manage**에서 **Advanced settings → Install Extension…**을 선택해 파일을 엽니다. 이전 화면은 **Settings → Extensions**에서 시작합니다. [Claude 설치 안내](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop).
 3. 첫 실행에서 Claude Desktop이 UV로 Python 의존성을 설치합니다. 설치 후 “Split-Beat HE 키보드 연결 상태를 확인해줘”라고 요청합니다.
 
@@ -25,10 +25,10 @@ Windows에서 패키지의 실행 명령과 MCP 응답을 검증했습니다. �
 
 ## 독립 MCP 설치
 
-[GitHub Releases](https://github.com/CodeKi0303/split-beat-he-plugin/releases)에서 `split_beat_he_mcp-0.1.5-py3-none-any.whl`을 내려받아 Python 가상 환경에 설치합니다.
+[GitHub Releases](https://github.com/CodeKi0303/split-beat-he-plugin/releases)에서 `split_beat_he_mcp-0.1.6-py3-none-any.whl`을 내려받아 Python 가상 환경에 설치합니다.
 
 ```sh
-python -m pip install ./split_beat_he_mcp-0.1.5-py3-none-any.whl
+python -m pip install ./split_beat_he_mcp-0.1.6-py3-none-any.whl
 split-beat-he-mcp --help
 ```
 

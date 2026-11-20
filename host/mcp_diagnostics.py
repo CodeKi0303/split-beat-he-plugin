@@ -17,7 +17,17 @@ from .performance import (PERFORMANCE, LINK_PERFORMANCE, LINK_FIELDS, ADC_DIAGNO
                           decode_performance, decode_link_performance, decode_adc_diagnostics,
                           compare_samples, delta32)
 from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, CAP_FINE_TRAVEL, TRAVEL_MAX
-from .hall_curve import normalized_to_mm, raw_to_estimated_mm
+from .hall_curve import CURVE_CUSTOM, normalized_to_mm, raw_to_estimated_mm
+
+
+def device_custom_curve(client, keys):
+    """The keyboard's shared curve_id 2 table when any given key uses it, else None.
+
+    Firmware 0.3.46+ maps raw ADC to travel through this one RAM table, so raw
+    estimates must read it from the device instead of assuming a fixed curve."""
+    if not any(key.get("curve_id", 0) == CURVE_CUSTOM for key in keys):
+        return None
+    return client.custom_curve()
 
 
 def duration(value):
@@ -38,6 +48,7 @@ def capture_sensors(client, duration_seconds=2.0, sample_hz=20, include_samples=
         total_travel_mm = validate_travel(total_travel_mm)
         info_before = client.info()
         config = client.get_config()
+        custom_curve = device_custom_curve(client, config["keys"])
     rows = [[] for _ in range(14)]
     sequences = [None, None]
     snapshots, start = [], clock()
@@ -70,7 +81,7 @@ def capture_sensors(client, duration_seconds=2.0, sample_hz=20, include_samples=
             if total_travel_mm is not None:
                 # STATUS travel already includes the selected firmware curve.
                 row["travel_mm"] = [normalized_to_mm(t, total_travel_mm[k]) for k, t in enumerate(row["travel"])]
-                row["raw_estimated_mm"] = [raw_to_estimated_mm(raw, config["keys"][k], total_travel_mm[k]) for k, raw in enumerate(row["raw"])]
+                row["raw_estimated_mm"] = [raw_to_estimated_mm(raw, config["keys"][k], total_travel_mm[k], custom_curve) for k, raw in enumerate(row["raw"])]
             snapshots.append(row)
         if clock() - start >= seconds:
             break
@@ -94,7 +105,11 @@ def capture_sensors(client, duration_seconds=2.0, sample_hz=20, include_samples=
     if config is not None:
         result.update(total_travel_mm=list(total_travel_mm),
                       curve_ids=[k.get("curve_id", 0) for k in config["keys"]],
-                      distance_note="STATUS travel is curve-corrected by firmware and scaled once. raw_estimated_mm uses the same curve on raw snapshots; filtering can differ. Both are approximate, not measured physical mm.")
+                      distance_note="STATUS travel is curve-corrected by firmware and scaled once; v0.3.41+ reports deadzone endpoints as 0/full travel (0..10000 host units). raw_estimated_mm is an unsnapped diagnostic estimate from raw ADC; filtering can differ. Both are approximate, not measured physical mm.")
+        if custom_curve is not None:
+            # config_crc (compared above) covers the table on 0.3.46+, so the
+            # estimates used one unchanged table for the whole capture.
+            result["custom_curve"] = list(custom_curve)
     return result
 
 
@@ -112,8 +127,10 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
     key_config = client.get_config()["keys"][key]
     if key_config["flags"] & 10 == 10:
         raise DeviceError("Turn off retrigger_before_release before timing analysis: STATUS snapshots do not expose synthetic USB release/press pulses. Raw sensor diagnostics remain available.")
+    custom_curve = None
     if total_travel_mm is not None:
         normalized_to_mm(0, total_travel_mm)  # validate metadata before capture
+        custom_curve = device_custom_curve(client, [key_config])
     start = clock()
     rows, edges, holds, issues = [], [], [], []
     counts = dict(duplicates=0, stale=0, resets=0, gaps=0, invalid=0)
@@ -182,7 +199,7 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
                            pressed=bool(mask & (1 << key)), segment=segment)
                 if total_travel_mm is not None:
                     row["travel_mm"] = normalized_to_mm(travel, total_travel_mm)
-                    row["raw_estimated_mm"] = raw_to_estimated_mm(raw, key_config, total_travel_mm)
+                    row["raw_estimated_mm"] = raw_to_estimated_mm(raw, key_config, total_travel_mm, custom_curve)
                 if previous is not None and row["pressed"] != previous["pressed"]:
                     event = dict(type="press" if row["pressed"] else "release",
                                  time_ms=(previous["estimated_sample_ms"]+estimated)/2,
@@ -223,7 +240,9 @@ def capture_key_timing(client, key, duration_seconds=5.0, sample_hz=100, include
         result.update(total_travel_mm=total_travel_mm,
                       curve_id=key_config.get("curve_id", 0),
                       key_config=key_config,
-                      distance_note="Firmware STATUS travel is already curve-corrected; travel_mm scales it once. raw_estimated_mm is an approximate raw-snapshot estimate. Proportional stroke scaling is not physical distance verification.")
+                      distance_note="Firmware STATUS travel is already curve-corrected; v0.3.41+ snaps deadzones to 0/full travel (0..10000 host units) and travel_mm scales that once. raw_estimated_mm remains an unsnapped raw-snapshot diagnostic estimate. Proportional stroke scaling is not physical distance verification.")
+        if custom_curve is not None:
+            result["custom_curve"] = list(custom_curve)
     return result
 
 

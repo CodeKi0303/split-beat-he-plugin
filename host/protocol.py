@@ -13,6 +13,9 @@ CAP_ADC_IRQ_PROFILE = 0x1000
 CAP_KEY_CHORD = 0x2000
 CAP_SAVE_OUTPUT = 0x4000
 CAP_RETRIGGER_BEFORE_RELEASE = 0x40000
+CAP_ADC_TUNING = 0x8000
+CAP_ADC_PAIR = 0x10000
+CAP_ADC_PAIR_READ = 0x20000
 CAP_FINE_TRAVEL = 0x80000
 # Normalized travel used by every host function. Firmware 0.3.43+ (capability
 # 0x80000) speaks it on the wire; earlier firmware uses 0..1000, so the client
@@ -22,6 +25,19 @@ TRAVEL_MAX = 10000
 LEGACY_TRAVEL_MAX = 1000
 LEGACY_TRAVEL_SCALE = TRAVEL_MAX // LEGACY_TRAVEL_MAX
 TRAVEL_FIELDS = ("actuation", "rt_press", "rt_release", "top_deadzone", "bottom_deadzone")
+ADC_TUNING, ADC_COMPARE, ADC_PAIR = 0x47, 0x48, 0x49
+CAP_TELEMETRY = 0x100000
+TELEMETRY_CONTROL, TELEMETRY_READ = 0x4A, 0x4B
+# Firmware 0.3.46+: curve_id 2 selects one shared user-drawn table. Command 0x4C
+# reads it (empty payload) or replaces it in RAM (15 x u16). The table holds the
+# outputs at signal 625, 1250, ..., 9375; the endpoints are always 0 and 10000.
+CAP_CUSTOM_CURVE = 0x200000
+CUSTOM_CURVE = 0x4C
+CUSTOM_CURVE_POINTS = 15
+CUSTOM_CURVE_STEP = 625
+CUSTOM_CURVE_IDENTITY = tuple((i + 1) * CUSTOM_CURVE_STEP for i in range(CUSTOM_CURVE_POINTS))
+ADC_SCAN_RATES = (8000, 16000, 32000, 64000, 96000)
+ADC_WINDOWS = (0, 1, 2, 4, 6, 8)
 INFO, STATUS, GET_KEY, SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, GET_BINDING, SET_BINDING = range(1, 11)
 MUTATIONS = {SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, SET_BINDING}
 STATUSES = ["OK", "BAD_COMMAND", "BAD_PACKET", "BAD_INDEX", "BAD_CONFIG", "BUSY", "CALIBRATION_INVALID", "NOT_READY", "STORAGE_ERROR"]
@@ -90,7 +106,7 @@ def key_record(value):
     integer(d["top_deadzone"], 0, d["actuation"]-1, "top_deadzone")
     integer(d["bottom_deadzone"], 0, TRAVEL_MAX-d["actuation"], "bottom_deadzone")
     integer(d["noise_deadband"], 0, 100, "noise_deadband")
-    integer(d["curve_id"], 0, 1, "curve_id")
+    integer(d["curve_id"], 0, 2, "curve_id")
     if d["flags"] & 4 and abs(d["pressed"]-d["released"]) < 128:
         raise ProtocolError("calibrated span must be >=128")
     return d
@@ -129,6 +145,31 @@ def require_key_capability(key, capabilities):
         raise ProtocolError("Bottom deadzone requires firmware 0.3.4+; no device mutation performed")
     if key.get("curve_id", 0) and not capabilities & CAP_HALL_CURVE:
         raise ProtocolError("Nonlinear Hall curve requires firmware 0.3.5+ capability 0x200; no device mutation performed")
+    if key.get("curve_id", 0) == 2 and not capabilities & CAP_CUSTOM_CURVE:
+        raise ProtocolError("Custom Hall curve requires firmware 0.3.46+ capability 0x200000; no device mutation performed")
+
+
+def custom_curve_record(points):
+    """15 non-decreasing outputs in 0..10000 (firmware rt_custom_curve_valid)."""
+    if not isinstance(points, (list, tuple)) or len(points) != CUSTOM_CURVE_POINTS:
+        raise ProtocolError(f"custom curve needs exactly {CUSTOM_CURVE_POINTS} points")
+    previous = 0
+    for index, value in enumerate(points):
+        integer(value, 0, TRAVEL_MAX, f"custom curve point {index}")
+        if value < previous:
+            raise ProtocolError("custom curve must not decrease")
+        previous = value
+    return tuple(points)
+
+
+def encode_custom_curve(points):
+    return struct.pack(f"<{CUSTOM_CURVE_POINTS}H", *custom_curve_record(points))
+
+
+def decode_custom_curve(data):
+    if len(data) != 2 * CUSTOM_CURVE_POINTS:
+        raise ProtocolError("custom curve reply length")
+    return custom_curve_record(struct.unpack(f"<{CUSTOM_CURVE_POINTS}H", data))
 
 
 def binding_record(value):

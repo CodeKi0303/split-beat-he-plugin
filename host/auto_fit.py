@@ -4,8 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 import math
 
-from .hall_curve import normalized_from_raw
-from .protocol import TRAVEL_MAX, key_record
+from .hall_curve import CURVE_CUSTOM, normalized_from_raw
+from .protocol import TRAVEL_MAX, custom_curve_record, key_record
 from .sampled_rt import SampledRT
 
 PHASES = ("released", "resting", "tapping", "holding")
@@ -35,8 +35,8 @@ def quantile(values, fraction):
     return sorted(values)[math.floor((len(values) - 1) * fraction)]
 
 
-def depth(raw, config):
-    return normalized_from_raw(raw, config["released"], config["pressed"], config.get("curve_id", 0))
+def depth(raw, config, custom_curve=None):
+    return normalized_from_raw(raw, config["released"], config["pressed"], config.get("curve_id", 0), custom_curve)
 
 
 
@@ -71,7 +71,14 @@ def prepare(value):
         raise ValueError("측정한 키와 설정의 키가 다릅니다.")
     if config["flags"] & 8:
         raise ValueError("미해제 재입력을 끈 뒤 자동 맞춤을 진행하세요. 호스트 샘플로 USB 재입력 펄스를 검증할 수 없습니다.")
-    SampledRT(config)
+    # curve_id 2 (firmware 0.3.46+) maps raw ADC through the keyboard's shared
+    # table, so the record must carry the table that was active while measuring.
+    custom_curve = None
+    if config.get("curve_id", 0) == CURVE_CUSTOM:
+        if value.get("customCurve") is None:
+            raise ValueError("사용자 곡선(curve 2) 키는 측정 당시 키보드의 곡선 표가 필요합니다. 다시 측정하세요.")
+        custom_curve = list(custom_curve_record(value["customCurve"]))
+    SampledRT(config, custom_curve)
     preference = value.get("preference", "balanced")
     if preference not in ("balanced", "repeat", "hold"):
         raise ValueError("사용 목적을 다시 선택하세요.")
@@ -101,7 +108,7 @@ def prepare(value):
                 if gap <= 0 or gap > 100 or not advance or advance >= 0x80000000:
                     raise ValueError(f"{name} 측정 중 통신이 끊기거나 중복된 샘플이 있습니다. 다시 측정하세요.")
                 max_gap = max(max_gap, gap)
-            records[phase].append({**row, "depth": depth(row["raw"], config)})
+            records[phase].append({**row, "depth": depth(row["raw"], config, custom_curve)})
         if rows[-1]["timeMs"] - rows[0]["timeMs"] < 2000:
             raise ValueError(f"{name}를 2초 이상 측정하세요.")
     released = [row["depth"] for row in records["released"]]
@@ -135,7 +142,7 @@ def prepare(value):
                     minimumTapPeak=minimum_peak, tapAmplitude=amplitude, holdMinimum=min(hold_depths),
                     holdRetreat=retreat, maxGapMs=rounded(max_gap))
     return dict(config=config, preference=preference, totalTravelMm=total, records=records,
-                cycles=cycles, evidence=evidence)
+                cycles=cycles, evidence=evidence, customCurve=custom_curve)
 
 
 def rising(states, start=0, end=None):
@@ -147,7 +154,7 @@ def rising(states, start=0, end=None):
 def metrics(config, data, observed=False):
     states = {}
     for phase in PHASES:
-        model = SampledRT(config)
+        model = SampledRT(config, data["customCurve"])
         states[phase] = [row["pressed"] if observed else model.step(row["raw"]) for row in data["records"][phase]]
     taps, pressed = data["records"]["tapping"], states["tapping"]
     missed, extra, missed_release, retreats = 0, 0, 0, []
@@ -188,7 +195,7 @@ def evaluate_auto_fit(config, value):
         data = prepare(value)
         if key_record(config)["flags"] & 8:
             raise ValueError("미해제 재입력을 끈 뒤 자동 맞춤을 진행하세요.")
-        model = SampledRT(config)
+        model = SampledRT(config, data["customCurve"])
         return dict(ready=True, reasons=[], metrics=metrics(model.config, data),
                     observedMetrics=metrics(model.config, data, True) if has_observed(data) else None,
                     evidence=data["evidence"], limits=LIMITS)

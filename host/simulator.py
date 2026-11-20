@@ -6,7 +6,7 @@ import struct
 import time
 import zlib
 from .protocol import *
-from .hall_curve import normalized_from_raw
+from .hall_curve import normalized_from_raw, recognized_travel
 from .sampled_rt import SampledRT
 from .default_bindings import default_bindings
 
@@ -37,6 +37,9 @@ class DemoTransport:
         # Wire units follow the capability word actually sent in the last INFO,
         # so tests that emulate firmware <=0.3.42 also get 0..1000 records.
         self.wire_legacy = False
+        # Firmware 0.3.46+ shared curve_id 2 table: RAM copy plus the saved one.
+        self.custom_curve = list(CUSTOM_CURVE_IDENTITY)
+        self.stored_curve = list(CUSTOM_CURVE_IDENTITY)
 
     def close(self):
         self.models.clear()
@@ -48,6 +51,7 @@ class DemoTransport:
         self.models.clear()
         self.pressed_mask = 0
         self.profile = copy.deepcopy(self.stored)
+        self.custom_curve = list(self.stored_curve)
         self.dirty = False
         self.enabled = self.stored_output
         self.queue.clear()
@@ -77,8 +81,9 @@ class DemoTransport:
     def _command(self, op, p):
         if op == INFO:
             if p: raise ProtocolError("length")
-            crc = zlib.crc32(b"".join(encode_key(k) for k in self.profile["keys"])+b"".join(encode_binding(b) for b in self.profile["bindings"]))
-            return struct.pack("<8B5IH4B", 0,3,22,0,14,6,4,28,64000,125,0x33f | CAP_KEY_CHORD | CAP_SAVE_OUTPUT | CAP_RETRIGGER_BEFORE_RELEASE | CAP_FINE_TRAVEL, self.generation,crc,1024,86,1,2,bool(self.stored))
+            # 0.3.46+: config_crc covers the key/binding encoding followed by the custom table.
+            crc = zlib.crc32(b"".join(encode_key(k) for k in self.profile["keys"])+b"".join(encode_binding(b) for b in self.profile["bindings"])+encode_custom_curve(self.custom_curve))
+            return struct.pack("<8B5IH4B", 0,3,46,0,14,6,4,28,64000,125,0x33f | CAP_KEY_CHORD | CAP_SAVE_OUTPUT | CAP_RETRIGGER_BEFORE_RELEASE | CAP_FINE_TRAVEL | CAP_CUSTOM_CURVE, self.generation,crc,1024,86,1,2,bool(self.stored))
         if op == STATUS:
             if len(p) != 1 or p[0] > 1: raise ProtocolError("side")
             elapsed = time.monotonic()-self.start
@@ -89,18 +94,21 @@ class DemoTransport:
             for offset, value in enumerate(raw):
                 key = self.profile["keys"][p[0] * 7 + offset]
                 if key["flags"] & 4:
-                    travel[offset] = normalized_from_raw(value, key["released"], key["pressed"], key["curve_id"])
+                    travel[offset] = normalized_from_raw(value, key["released"], key["pressed"], key["curve_id"], self.custom_curve)
                 key_id = key["key"]
                 if key["flags"] & 5 == 5:
                     model = self.models.get(key_id)
                     if model is None or model.config != key:
-                        model = self.models[key_id] = SampledRT(key)
+                        model = self.models[key_id] = SampledRT(key, self.custom_curve)
                     pressed = model.step(value)
                     self.retrigger_events[key_id] += int(model.retriggered)
                     self.pressed_mask = (self.pressed_mask & ~(1 << key_id)) | (int(pressed) << key_id)
                 else:
                     self.models.pop(key_id, None)
                     self.pressed_mask &= ~(1 << key_id)
+                # Match v0.3.41 telemetry without feeding snapped endpoints
+                # back into SampledRT or changing raw ADC/calibration data.
+                travel[offset] = recognized_travel(travel[offset], key)
             flags = int(self.enabled)|2|(int(self.dirty)<<2)|(int(self.stored is not None)<<3)
             if self.wire_legacy:
                 travel = [(v + LEGACY_TRAVEL_SCALE // 2) // LEGACY_TRAVEL_SCALE for v in travel]
@@ -123,6 +131,14 @@ class DemoTransport:
             self.profile["bindings"][d["input"]] = d
             self.enabled, self.dirty = False, True
             return encode_binding(d)
+        if op == CUSTOM_CURVE:
+            if p:
+                if len(p) != 2 * CUSTOM_CURVE_POINTS: raise ProtocolError("length")
+                self.custom_curve = list(decode_custom_curve(p))
+                self.models.clear()
+                self.pressed_mask = 0
+                self.enabled, self.dirty = False, True
+            return encode_custom_curve(self.custom_curve)
         if op == OUTPUT:
             if len(p) != 1 or p[0] > 1: raise ProtocolError("length")
             if p[0] and any(k["flags"]&1 and not k["flags"]&4 for k in self.profile["keys"]): raise RuntimeError("uncalibrated")
@@ -155,11 +171,13 @@ class DemoTransport:
             self.stored_output = self.enabled
             self.enabled = False
             self.stored = copy.deepcopy(self.profile)
+            self.stored_curve = list(self.custom_curve)
             self.generation = ((self.generation+1) & 0xFFFFFFFF) or 1
             return struct.pack("<I", self.generation)
         if op == DEFAULTS:
             if p: raise ProtocolError("length")
             self.profile = defaults()
+            self.custom_curve = list(CUSTOM_CURVE_IDENTITY)
             self.models.clear()
             self.pressed_mask = 0
             self.enabled, self.dirty = False, True

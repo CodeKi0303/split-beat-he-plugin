@@ -72,6 +72,11 @@ def decode_scheduler_diagnostics(payload):
     result = dict(zip(SCHEDULER_FIELDS, struct.unpack("<13I", payload)))
     if result["link_flags"] & ~15:
         raise ValueError("Unknown scheduler link flags")
+    # cc_error stays the raw word. Firmware 0.3.45+ packs boot-lifetime fault
+    # evidence above the current error; older firmware leaves those bits zero.
+    word = result["cc_error"]
+    result.update(cc_current_error=word & 0xFF, cc_last_error=(word >> 8) & 0xFF,
+                  cc_retries=(word >> 16) & 0xFF, link_restarts=word >> 24)
     return result
 
 

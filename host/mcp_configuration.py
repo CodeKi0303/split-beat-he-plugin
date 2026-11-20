@@ -18,7 +18,7 @@ from .client import DeviceError
 from .default_bindings import default_bindings
 from .hall_curve import curve_catalog
 from .protocol import (
-    CAP_FINE_TRAVEL, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, LEGACY_TRAVEL_SCALE, ProtocolError, TRAVEL_MAX,
+    CAP_CUSTOM_CURVE, CAP_FINE_TRAVEL, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, LEGACY_TRAVEL_SCALE, ProtocolError, TRAVEL_MAX,
     binding_record, integer, key_record, require_binding_capability, require_key_capability, validate_profile,
 )
 
@@ -83,7 +83,7 @@ def propose_keys(profile, keys, patch, *, unit="normalized", travel_mm=None, cap
     if "noise_deadband" in patch:
         integer(patch["noise_deadband"], 0, 100, "noise_deadband")
     if "curve_id" in patch:
-        integer(patch["curve_id"], 0, 1, "curve_id")
+        integer(patch["curve_id"], 0, 2, "curve_id")
     for name in DISTANCES:
         if name in patch:
             if unit == "mm":
@@ -419,8 +419,22 @@ def register_configuration_tools(server, session, read, write, guard):
     @server.tool(annotations=read, structured_output=True)
     @guard
     def keyboard_curve_catalog() -> dict[str, Any]:
-        """List linear and approximate Owlab Ti HE nonlinear profiles, stroke scaling, provenance and firmware requirements. No device access or changes."""
-        return curve_catalog()
+        """List linear, approximate Owlab Ti HE and custom drawn (curve2) profiles, stroke scaling, provenance and firmware requirements. When connected to firmware0.3.46+, also reads the keyboard's shared custom table and which keys use it. Read-only; no changes."""
+        catalog = curve_catalog()
+        client = session.client
+        if client is None:
+            catalog["device"] = dict(connected=False, note="Connect to read the keyboard's custom curve table.")
+            return catalog
+        info = client.info()
+        device = dict(connected=True, demo=bool(client.transport.demo),
+                      custom_curve_supported=bool(info["capabilities"] & CAP_CUSTOM_CURVE))
+        if device["custom_curve_supported"]:
+            keys = client.get_config()["keys"]
+            device.update(custom_curve=client.custom_curve(),
+                          custom_curve_keys=[key["key"] for key in keys if key.get("curve_id", 0) == 2],
+                          custom_curve_note="RAM table shared by every curve2 key; SAVE stores it with the settings. c77-profile-v1 exports do not carry it.")
+        catalog["device"] = device
+        return catalog
 
     @server.tool(annotations=read, structured_output=True)
     @guard
@@ -453,7 +467,7 @@ def register_configuration_tools(server, session, read, write, guard):
     @server.tool(annotations=read, structured_output=True)
     @guard
     def keyboard_preview_keys(keys: list[StrictInt], patch: dict, unit: str = "normalized") -> dict[str, Any]:
-        """Preview a partial Hall-settings patch without writes. unit normalized(0..10000 integers; multiples of10 on firmware before0.3.43) or mm(0.001 increments using session stroke; firmware before0.3.43 rounds to its 1/1000 stroke step). Return fingerprint for optimistic apply. Valid patch fields: actuation,rt_press,rt_release,top_deadzone,bottom_deadzone,noise_deadband,enabled,rapid_trigger,retrigger_before_release,curve_id(0 linear,1 approximate Owlab Ti HE). Nonzero curve requires capability0x200. retrigger_before_release is a strict boolean, needs capability0x40000 and sends release/press pulses while RT remains held, breaking long notes. See keyboard_curve_catalog."""
+        """Preview a partial Hall-settings patch without writes. unit normalized(0..10000 integers; multiples of10 on firmware before0.3.43) or mm(0.001 increments using session stroke; firmware before0.3.43 rounds to its 1/1000 stroke step). Return fingerprint for optimistic apply. Valid patch fields: actuation,rt_press,rt_release,top_deadzone,bottom_deadzone,noise_deadband,enabled,rapid_trigger,retrigger_before_release,curve_id(0 linear,1 approximate Owlab Ti HE,2 the keyboard's shared custom table). Nonzero curve requires capability0x200; curve2 also needs0x200000 (firmware0.3.46+). retrigger_before_release is a strict boolean, needs capability0x40000 and sends release/press pulses while RT remains held, breaking long notes. See keyboard_curve_catalog."""
         client = session.require_client()
         original = client.get_config()
         info = client.info()
