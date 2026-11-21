@@ -29,7 +29,7 @@ def build_server(client=None):
                 raise ToolError(str(exc)) from exc
         return wrapped
 
-    server = MCPServer("split_keyboard", version="0.1.7", instructions="Start with keyboard_session and keyboard_list_devices. Connect an exact serial explicitly; startup does not claim a physical device. Demo responses are simulation, never hardware validation. Read keyboard_layout and keyboard_get_config before identifying or editing keys; use the current binding_label with side/input type, never legacy Q/W physical labels as active names. Re-read after remapping. Binding kind 7 moves the pointer (capability0x400000, firmware0.3.48+): modifiers is the axis, code a signed speed. Duplicate bindings require side, input type/direction or input ID. Disconnected layouts are packaged defaults, not hardware state. Dirty RAM mappings are active but unsaved; only dirty=false with stored_valid=true supports saying saved. Configuration changes release keys and remain in RAM until explicit save verifies reboot/readback. Separate normalized 0..10000 from estimated mm (settings accept 0.001 mm steps) and preserve measured calibration. Nonlinear curve selection needs capability0x200 (custom curve2 also 0x200000, a table shared by every curve2 key); use keyboard_curve_catalog for approximation limits and stroke scaling. Use physical user actions during calibration. Capture tools expose bounded host snapshots, not full ADC streams. Firmware update requires its separate permission and explicit action. Never report untested hardware performance as verified.")
+    server = MCPServer("split_keyboard", version="0.1.7", instructions="Start with keyboard_session and keyboard_list_devices. Connect an exact serial explicitly; startup does not claim a physical device. Demo responses are simulation, never hardware validation. Read keyboard_layout and keyboard_get_config before identifying or editing keys; use the current binding_label with side/input type, never legacy Q/W physical labels as active names. Re-read after remapping. Binding kind 7 moves the pointer (capability0x400000, firmware0.3.48+): modifiers is the axis, code a signed speed; encoder inputs may add accel 1..15 (capability0x800000, firmware0.3.49+). Duplicate bindings require side, input type/direction or input ID. Disconnected layouts are packaged defaults, not hardware state. Dirty RAM mappings are active but unsaved; only dirty=false with stored_valid=true supports saying saved. Configuration changes release keys and remain in RAM until explicit save verifies reboot/readback. Separate normalized 0..10000 from estimated mm (settings accept 0.001 mm steps) and preserve measured calibration. Nonlinear curve selection needs capability0x200 (custom curve2 also 0x200000, a table shared by every curve2 key); use keyboard_curve_catalog for approximation limits and stroke scaling. Use physical user actions during calibration. Capture tools expose bounded host snapshots, not full ADC streams. Firmware update requires its separate permission and explicit action. Never report untested hardware performance as verified.")
     read = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
     write = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
 
@@ -84,14 +84,16 @@ def build_server(client=None):
 
     @server.tool(annotations=write, structured_output=True)
     @explain_errors
-    def keyboard_set_binding(input: StrictInt, kind: StrictInt, code: StrictInt | None = None, modifiers: StrictInt = 0, keys: list[StrictInt] | None = None) -> dict[str, Any]:
-        """Set a RAM binding. Kinds 0..5 use code. Kind 6 uses keys (2 or 3 distinct ascending ordinary HID usages) plus optional modifiers and requires capability 0x2000. Kind 7 moves the mouse pointer: modifiers is the axis (0 X, 1 Y), code a signed nonzero speed -4000..4000 (positive right/down; Hall px/s at full depth, MX px/s, encoder px per detent) and requires capability 0x400000 (firmware 0.3.48+). See keyboard_binding_catalog."""
+    def keyboard_set_binding(input: StrictInt, kind: StrictInt, code: StrictInt | None = None, modifiers: StrictInt = 0, keys: list[StrictInt] | None = None, accel: StrictInt = 0) -> dict[str, Any]:
+        """Set a RAM binding. Kinds 0..5 use code. Kind 6 uses keys (2 or 3 distinct ascending ordinary HID usages) plus optional modifiers and requires capability 0x2000. Kind 7 moves the mouse pointer: modifiers is the axis (0 X, 1 Y), code a signed nonzero speed -4000..4000 (positive right/down; Hall px/s at full depth, MX px/s, encoder px per detent) and requires capability 0x400000 (firmware 0.3.48+). Encoder directions 20..27 may set accel 1..15 (0 = off): gain 1 at 5 detents/s or slower, rising linearly to (1+accel)x at 40 detents/s; needs capability 0x800000 (firmware 0.3.49+). See keyboard_binding_catalog."""
         session.require_idle()
         record = dict(input=input, kind=kind, modifiers=modifiers)
         if code is not None:
             record["code"] = code
         if keys is not None:
             record["keys"] = keys
+        if accel:
+            record["accel"] = accel
         client = session.require_client()
         record = binding_record(record)
         require_binding_capability(record, client.info()["capabilities"])

@@ -1,4 +1,4 @@
-"""Firmware 0.3.48 pointer bindings (kind 7) and the 0.3.47 ADC compare range in MCP tools; never opens USB."""
+"""Firmware 0.3.48 pointer bindings (kind 7), 0.3.49 encoder pointer acceleration and the 0.3.47 ADC compare range in MCP tools; never opens USB."""
 import asyncio
 import struct
 import unittest
@@ -8,7 +8,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from host.client import KeyboardClient
 from host.mcp_configuration import binding_catalog, binding_label, layout
 from host.mcp_server import build_server
-from host.protocol import (ADC_COMPARE, CAP_ADC_TUNING, CAP_MOUSE_BUTTON, CAP_POINTER, INFO, MUTATIONS, POINTER_MAX, ProtocolError,
+from host.protocol import (ADC_COMPARE, CAP_ADC_TUNING, CAP_MOUSE_BUTTON, CAP_POINTER, CAP_POINTER_ACCEL, INFO, MUTATIONS, POINTER_ACCEL_MAX, POINTER_MAX, ProtocolError,
                            binding_record, decode_binding, encode_binding, require_binding_capability)
 from host.simulator import DemoTransport, defaults
 
@@ -17,10 +17,11 @@ UP_KNOB = dict(input=22, kind=7, code=-25, modifiers=1)
 
 
 class Transport(DemoTransport):
-    def __init__(self, supported=True):
+    def __init__(self, supported=True, strip=0):
         super().__init__()
         self.commands = []
         self.supported = supported
+        self.strip = strip | (0 if supported else CAP_POINTER | CAP_POINTER_ACCEL)
 
     def _command(self, op, payload):
         self.commands.append(op)
@@ -30,12 +31,12 @@ class Transport(DemoTransport):
         if op == INFO:
             response = bytearray(response)
             caps = struct.unpack_from("<I", response, 16)[0] | CAP_ADC_TUNING
-            struct.pack_into("<I", response, 16, caps if self.supported else caps & ~CAP_POINTER)
+            struct.pack_into("<I", response, 16, caps & ~self.strip)
         return bytes(response)
 
 
-def device(write=True, supported=True, bindings=()):
-    transport = Transport(supported)
+def device(write=True, supported=True, bindings=(), strip=0):
+    transport = Transport(supported, strip)
     for binding in bindings:
         transport.profile["bindings"][binding["input"]] = dict(binding)
     return KeyboardClient(transport, write_enabled=write), transport
@@ -147,6 +148,103 @@ class PointerToolTests(unittest.TestCase):
         for arguments in (dict(code=0), dict(code=5000), dict(modifiers=2)):
             with self.assertRaises(ToolError, msg=arguments):
                 asyncio.run(server.call_tool("keyboard_set_binding", {**RIGHT, **arguments}))
+        self.assertFalse(set(transport.commands) & MUTATIONS)
+
+
+ACCEL_KNOB = dict(input=20, kind=7, code=-25, modifiers=0, accel=4)
+
+
+class PointerAccelTests(unittest.TestCase):
+    def test_codec_wire_layout_and_round_trip(self):
+        self.assertEqual(encode_binding(ACCEL_KNOB), bytes((20, 7, 0xE7, 0xFF, 0, 4)))
+        for record in (ACCEL_KNOB, dict(input=27, kind=7, code=4000, modifiers=1, accel=POINTER_ACCEL_MAX),
+                       dict(input=23, kind=7, code=1, modifiers=0, accel=1)):
+            self.assertEqual(decode_binding(encode_binding(record)), record)
+        # accel 0 is the same record as no accel field, and encodes a zero last byte
+        self.assertEqual(binding_record({**ACCEL_KNOB, "accel": 0}), dict(input=20, kind=7, code=-25, modifiers=0))
+        self.assertEqual(encode_binding({**ACCEL_KNOB, "accel": 0})[5], 0)
+
+    def test_validation(self):
+        for bad in ({"accel": POINTER_ACCEL_MAX + 1}, {"accel": -1}, {"accel": True}, {"input": 19}, {"input": 0}):
+            with self.assertRaises(ProtocolError, msg=bad):
+                binding_record({**ACCEL_KNOB, **bad})
+        for other in (dict(input=20, kind=2, code=1, modifiers=0), dict(input=20, kind=5, code=1, modifiers=0)):
+            with self.assertRaises(ProtocolError):  # only kind 7 has an accel field
+                binding_record({**other, "accel": 2})
+        with self.assertRaises(ProtocolError):  # other kinds still reject a nonzero reserved byte
+            decode_binding(bytes((20, 2, 1, 0, 0, 3)))
+        with self.assertRaises(ProtocolError):  # accel byte on a Hall pointer binding
+            decode_binding(bytes((0, 7, 0x20, 0x03, 0, 2)))
+
+    def test_capability_gate(self):
+        record = binding_record(ACCEL_KNOB)
+        with self.assertRaisesRegex(ProtocolError, "0x800000"):
+            require_binding_capability(record, CAP_POINTER)
+        require_binding_capability(record, CAP_POINTER | CAP_POINTER_ACCEL)
+        require_binding_capability(binding_record({**ACCEL_KNOB, "accel": 0}), CAP_POINTER)
+
+    def test_label_and_catalog(self):
+        self.assertEqual(binding_label(dict(input=20, kind=7, code=20, modifiers=0, accel=4)), "Pointer Right (20, accel 4)")
+        self.assertEqual(binding_label(ACCEL_KNOB), "Pointer Left (25, accel 4)")
+        accel = binding_catalog()["pointer"]["accel"]
+        self.assertEqual(accel["capability"], CAP_POINTER_ACCEL)
+        self.assertEqual(accel["range"], [0, 15])
+        self.assertEqual(accel["inputs"], [20, 27])
+        self.assertIn("40 detents/s", accel["model"])
+
+    def test_read_tools_show_accel(self):
+        client, transport = device(write=False, bindings=(ACCEL_KNOB,))
+        server = build_server(client)
+        self.assertEqual(call(server, "keyboard_get_config")["bindings"][20], ACCEL_KNOB)
+        self.assertEqual(call(server, "keyboard_layout")["inputs"][20]["binding_label"], "Pointer Left (25, accel 4)")
+        features = call(server, "keyboard_info")["features"]
+        self.assertTrue(features["pointer_acceleration"])
+        self.assertEqual(call(server, "keyboard_export_studio_profile")["device"]["bindings"][20], ACCEL_KNOB)
+        self.assertFalse(set(transport.commands) & MUTATIONS)
+
+    def test_set_binding_with_accel(self):
+        client, transport = device()
+        server = build_server(client)
+        self.assertEqual(call(server, "keyboard_set_binding", input=20, kind=7, code=-25, modifiers=0, accel=4), ACCEL_KNOB)
+        self.assertEqual(transport.profile["bindings"][20], ACCEL_KNOB)
+        # accel=0 (the default) writes a plain pointer binding with no accel field
+        plain = call(server, "keyboard_set_binding", input=20, kind=7, code=-25, modifiers=0)
+        self.assertEqual(plain, dict(input=20, kind=7, code=-25, modifiers=0))
+        self.assertEqual(call(server, "keyboard_get_config")["bindings"][20], plain)
+
+    def test_set_bindings_with_accel(self):
+        client, _ = device()
+        server = build_server(client)
+        batch = [ACCEL_KNOB, dict(input=21, kind=7, code=25, modifiers=0, accel=4),
+                 dict(input=22, kind=7, code=-25, modifiers=1)]
+        call(server, "keyboard_set_bindings", bindings=batch)
+        self.assertEqual(call(server, "keyboard_get_config")["bindings"][20:23], batch)
+        labels = [item["binding_label"] for item in call(server, "keyboard_layout")["inputs"][20:23]]
+        self.assertEqual(labels, ["Pointer Left (25, accel 4)", "Pointer Right (25, accel 4)", "Pointer Up (25)"])
+
+    def test_firmware_0348_rejects_accel_before_any_write(self):
+        client, transport = device(strip=CAP_POINTER_ACCEL)
+        server = build_server(client)
+        self.assertFalse(call(server, "keyboard_info")["features"]["pointer_acceleration"])
+        before = list(transport.profile["bindings"])
+        transport.commands.clear()
+        with self.assertRaisesRegex(ToolError, "0x800000"):
+            asyncio.run(server.call_tool("keyboard_set_binding", dict(input=20, kind=7, code=-25, modifiers=0, accel=4)))
+        with self.assertRaisesRegex(ToolError, "0x800000"):
+            asyncio.run(server.call_tool("keyboard_set_bindings", dict(bindings=[ACCEL_KNOB])))
+        self.assertFalse(set(transport.commands) & MUTATIONS)
+        self.assertEqual(transport.profile["bindings"], before)
+        # a plain pointer binding still works on 0.3.48
+        self.assertEqual(call(server, "keyboard_set_binding", input=20, kind=7, code=-25, modifiers=0)["kind"], 7)
+
+    def test_accel_on_non_encoder_rejected_by_tool(self):
+        client, transport = device()
+        server = build_server(client)
+        transport.commands.clear()
+        for arguments in (dict(input=0, kind=7, code=800, modifiers=0, accel=2), dict(input=20, kind=7, code=-25, modifiers=0, accel=16),
+                          dict(input=20, kind=2, code=1, modifiers=0, accel=2)):
+            with self.assertRaises(ToolError, msg=arguments):
+                asyncio.run(server.call_tool("keyboard_set_binding", arguments))
         self.assertFalse(set(transport.commands) & MUTATIONS)
 
 

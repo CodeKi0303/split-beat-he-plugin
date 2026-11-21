@@ -18,7 +18,7 @@ from .client import DeviceError
 from .default_bindings import default_bindings
 from .hall_curve import curve_catalog
 from .protocol import (
-    CAP_CUSTOM_CURVE, CAP_FINE_TRAVEL, CAP_KEY_CHORD, CAP_POINTER, POINTER_MAX, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, LEGACY_TRAVEL_SCALE, ProtocolError, TRAVEL_MAX,
+    CAP_CUSTOM_CURVE, CAP_FINE_TRAVEL, CAP_KEY_CHORD, CAP_POINTER, POINTER_MAX, CAP_POINTER_ACCEL, POINTER_ACCEL_MAX, CAP_RETRIGGER_BEFORE_RELEASE, DEFAULTS, LEGACY_TRAVEL_SCALE, ProtocolError, TRAVEL_MAX,
     binding_record, integer, key_record, require_binding_capability, require_key_capability, validate_profile,
 )
 
@@ -341,7 +341,8 @@ def binding_label(binding):
             axis = "Right" if binding["code"] > 0 else "Left"
         else:
             axis = "Down" if binding["code"] > 0 else "Up"
-        return f"Pointer {axis} ({abs(binding['code'])})"
+        accel = f", accel {binding['accel']}" if binding.get("accel") else ""
+        return f"Pointer {axis} ({abs(binding['code'])}{accel})"
     if kind in (2, 3):
         return ("Scroll " + ("Up" if binding["code"] == 1 else "Down") if kind == 2 else
                 "Scroll " + ("Right" if binding["code"] == 1 else "Left"))
@@ -391,10 +392,12 @@ def binding_catalog():
         scroll_codes={"1": "up/right", "-1": "down/left"},
         pointer={"capability": CAP_POINTER, "axis_in_modifiers": {"0": "X (+right)", "1": "Y (+down)"},
                  "speed_range": [-POINTER_MAX, POINTER_MAX],
-                 "speed_units": "Hall: px/s at full depth; MX: px/s (30%->100% over 350 ms); encoder: px per detent"},
+                 "speed_units": "Hall: px/s at full depth; MX: px/s (30%->100% over 350 ms); encoder: px per detent",
+                 "accel": {"capability": CAP_POINTER_ACCEL, "range": [0, POINTER_ACCEL_MAX], "inputs": [20, 27],
+                           "model": "gain 1 below 5 detents/s, rising linearly to (1+accel)x at 40 detents/s"}},
         notes=["Keyboard usages are USB HID page 0x07, not characters or OS scan codes. OS language/layout affects resulting characters.",
                "Modifier bits are supported in kinds 1 and 6. Kind 6 takes a keys list instead of code. Disabled records require code=0,modifiers=0.",
-               "Kind 7 (pointer, firmware 0.3.48+ capability0x400000) puts the axis in modifiers (0 X, 1 Y) and a signed nonzero speed in code (-4000..4000); positive is right/down.",
+               "Kind 7 (pointer, firmware 0.3.48+ capability0x400000) puts the axis in modifiers (0 X, 1 Y) and a signed nonzero speed in code (-4000..4000); positive is right/down. Encoder inputs 20..27 may add accel 1..15 (firmware 0.3.49+ capability0x800000; omitted when 0): gain 1 at 5 detents/s or slower, rising linearly to (1+accel)x at 40 detents/s, gaps of 200 ms or more count as slow.",
                "Mouse buttons and Hall/MX press-edge scroll require firmware capability0x20. No text macro or arbitrary input injection is exposed."])
 
 
@@ -503,7 +506,7 @@ def register_configuration_tools(server, session, read, write, guard):
     @server.tool(annotations=write, structured_output=True)
     @guard
     def keyboard_set_bindings(bindings: list[dict], expected_fingerprint: str | None = None) -> dict[str, Any]:
-        """Apply 1..28 distinct full bindings. Kind 6 uses {input,kind,keys,modifiers}; other kinds use code instead of keys. Kind 7 moves the pointer: modifiers is the axis (0 X, 1 Y), code a signed nonzero speed -4000..4000 (Hall px/s at full depth, MX px/s, encoder px per detent); needs capability0x400000 (firmware0.3.48+). Validate all capabilities and verify full readback. RAM only; output off."""
+        """Apply 1..28 distinct full bindings. Kind 6 uses {input,kind,keys,modifiers}; other kinds use code instead of keys. Kind 7 moves the pointer: modifiers is the axis (0 X, 1 Y), code a signed nonzero speed -4000..4000 (Hall px/s at full depth, MX px/s, encoder px per detent); needs capability0x400000 (firmware0.3.48+). Encoder inputs 20..27 may add optional accel 1..15 (omit or 0 = off; capability0x800000, firmware0.3.49+). Validate all capabilities and verify full readback. RAM only; output off."""
         client = session.require_client()
         _write_permission(client)
         _not_calibrating(session, client)

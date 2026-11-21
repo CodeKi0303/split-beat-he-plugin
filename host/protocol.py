@@ -42,6 +42,12 @@ CUSTOM_CURVE_IDENTITY = tuple((i + 1) * CUSTOM_CURVE_STEP for i in range(CUSTOM_
 CAP_POINTER = 0x400000
 BINDING_POINTER = 7
 POINTER_MAX = 4000
+# Firmware 0.3.49+: optional "accel" 1..15 on encoder pointer bindings (inputs
+# 20..27), carried in the last binding byte. Below 5 detents/s a detent moves
+# "code" px; the gain rises linearly to (1+accel)x at 40 detents/s. Records omit
+# accel when it is 0.
+CAP_POINTER_ACCEL = 0x800000
+POINTER_ACCEL_MAX = 15
 ADC_SCAN_RATES = (8000, 16000, 32000, 64000, 96000)
 ADC_WINDOWS = (0, 1, 2, 4, 6, 8)
 INFO, STATUS, GET_KEY, SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, GET_BINDING, SET_BINDING = range(1, 11)
@@ -183,7 +189,7 @@ def binding_record(value):
         raise ProtocolError("binding fields do not match schema")
     kind = integer(value.get("kind"), 0, 7, "kind")
     fields = CHORD_BIND_FIELDS if kind == 6 else BIND_FIELDS
-    if set(value) != set(fields):
+    if set(value) != set(fields) and not (kind == BINDING_POINTER and set(value) == set(BIND_FIELDS) | {"accel"}):
         raise ProtocolError("binding fields do not match schema")
     d = dict(value)
     integer(d["input"], 0, 27, "input")
@@ -201,6 +207,11 @@ def binding_record(value):
         if not code:
             raise ProtocolError("pointer speed must not be zero")
         integer(d["modifiers"], 0, 1, "pointer axis (0 X, 1 Y)")
+        accel = integer(d.pop("accel", 0), 0, POINTER_ACCEL_MAX, "pointer acceleration")
+        if accel and d["input"] < 20:
+            raise ProtocolError("pointer acceleration applies to encoder directions (inputs 20..27) only")
+        if accel:
+            d["accel"] = accel
         return d
     code = integer(d["code"], -1, 65535, "code")
     if kind == 0 and (code or d["modifiers"]):
@@ -223,6 +234,8 @@ def require_binding_capability(binding, capabilities):
         raise ProtocolError("Keyboard chords require C86 firmware capability 0x2000")
     if binding["kind"] == BINDING_POINTER and not capabilities & CAP_POINTER:
         raise ProtocolError("Pointer movement requires firmware 0.3.48+ capability 0x400000; no device mutation performed")
+    if binding.get("accel") and not capabilities & CAP_POINTER_ACCEL:
+        raise ProtocolError("Pointer acceleration requires firmware 0.3.49+ capability 0x800000; no device mutation performed")
     extended = binding["kind"] == 5 or (binding["kind"] in (2, 3) and binding["input"] < 20)
     if extended and not capabilities & CAP_MOUSE_BUTTON:
         raise ProtocolError("This binding requires firmware 0.2+; no device mutation performed")
@@ -233,7 +246,7 @@ def encode_binding(value):
     if d["kind"] == 6:
         keys = d["keys"]
         return bytes((d["input"], d["kind"], keys[0], keys[1], d["modifiers"], keys[2] if len(keys) == 3 else 0))
-    return struct.pack("<BBHBB", d["input"], d["kind"], d["code"] & 0xFFFF, d["modifiers"], 0)
+    return struct.pack("<BBHBB", d["input"], d["kind"], d["code"] & 0xFFFF, d["modifiers"], d.get("accel", 0))
 
 
 def decode_binding(data):
@@ -244,6 +257,12 @@ def decode_binding(data):
         keys = [first, second, third] if third else [first, second]
         return binding_record(dict(input=inp, kind=kind, keys=keys, modifiers=mod))
     inp, kind, code, mod, reserved = struct.unpack("<BBHBB", data)
+    if kind == BINDING_POINTER:
+        code = code - 0x10000 if code >= 0x8000 else code
+        record = dict(input=inp, kind=kind, code=code, modifiers=mod)
+        if reserved:
+            record["accel"] = reserved
+        return binding_record(record)
     if reserved:
         raise ProtocolError("binding reserved byte")
     if kind == BINDING_POINTER and code >= 0x8000:

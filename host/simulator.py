@@ -83,7 +83,7 @@ class DemoTransport:
             if p: raise ProtocolError("length")
             # 0.3.46+: config_crc covers the key/binding encoding followed by the custom table.
             crc = zlib.crc32(b"".join(encode_key(k) for k in self.profile["keys"])+b"".join(encode_binding(b) for b in self.profile["bindings"])+encode_custom_curve(self.custom_curve))
-            return struct.pack("<8B5IH4B", 0,3,48,0,14,6,4,28,64000,125,0x33f | CAP_KEY_CHORD | CAP_SAVE_OUTPUT | CAP_RETRIGGER_BEFORE_RELEASE | CAP_FINE_TRAVEL | CAP_CUSTOM_CURVE | CAP_POINTER, self.generation,crc,1024,86,1,2,bool(self.stored))
+            return struct.pack("<8B5IH4B", 0,3,49,0,14,6,4,28,64000,125,0x33f | CAP_KEY_CHORD | CAP_SAVE_OUTPUT | CAP_RETRIGGER_BEFORE_RELEASE | CAP_FINE_TRAVEL | CAP_CUSTOM_CURVE | CAP_POINTER | CAP_POINTER_ACCEL, self.generation,crc,1024,86,1,2,bool(self.stored))
         if op == STATUS:
             if len(p) != 1 or p[0] > 1: raise ProtocolError("side")
             elapsed = time.monotonic()-self.start
