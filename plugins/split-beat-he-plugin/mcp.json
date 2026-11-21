@@ -6,7 +6,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "${PLUGIN_ROOT}/server/split_beat_he_mcp-0.1.6-py3-none-any.whl",
+        "${PLUGIN_ROOT}/server/split_beat_he_mcp-0.1.7-py3-none-any.whl",
         "split-beat-he-mcp",
         "--write-enabled"
       ],

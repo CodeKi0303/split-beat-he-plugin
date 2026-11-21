@@ -216,7 +216,8 @@ class KeyboardClient:
         return applied
 
     def adc_compare(self, key):
-        integer(key, 0, 6, "left Hall key")
+        # 0..6 left; 7..13 right on firmware 0.3.47+ (older firmware: BAD_INDEX).
+        integer(key, 0, 13, "Hall key")
         reply = self.request(ADC_COMPARE, bytes([key]))
         if len(reply) != 12:
             raise ProtocolError("Invalid ADC comparison reply")

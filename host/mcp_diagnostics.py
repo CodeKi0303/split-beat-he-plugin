@@ -16,7 +16,7 @@ from .performance import (PERFORMANCE, LINK_PERFORMANCE, LINK_FIELDS, ADC_DIAGNO
                           ADC_IRQ_PROFILE, decode_adc_irq_profile_begin, decode_adc_irq_profile_page,
                           decode_performance, decode_link_performance, decode_adc_diagnostics,
                           compare_samples, delta32)
-from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD, CAP_RETRIGGER_BEFORE_RELEASE, CAP_FINE_TRAVEL, TRAVEL_MAX
+from .protocol import integer, CAP_ADC_TRACE, CAP_CPU_PROFILE, CAP_ADC_IRQ_PROFILE, CAP_KEY_CHORD, CAP_POINTER, CAP_RETRIGGER_BEFORE_RELEASE, CAP_FINE_TRAVEL, TRAVEL_MAX
 from .hall_curve import CURVE_CUSTOM, normalized_to_mm, raw_to_estimated_mm
 
 
@@ -251,6 +251,7 @@ def capability_summary(info):
     version = (info["major"], info["minor"], info["patch"])
     return {"mouse_button_mapping": bool(caps & 0x20),
             "keyboard_chord_mapping": bool(caps & CAP_KEY_CHORD),
+            "pointer_mapping": bool(caps & CAP_POINTER),
             "retrigger_before_release": bool(caps & CAP_RETRIGGER_BEFORE_RELEASE),
             "bottom_deadzone": bool(caps & 0x100),
             "nonlinear_hall_curve": bool(caps & 0x200),

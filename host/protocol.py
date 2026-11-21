@@ -36,6 +36,12 @@ CUSTOM_CURVE = 0x4C
 CUSTOM_CURVE_POINTS = 15
 CUSTOM_CURVE_STEP = 625
 CUSTOM_CURVE_IDENTITY = tuple((i + 1) * CUSTOM_CURVE_STEP for i in range(CUSTOM_CURVE_POINTS))
+# Firmware 0.3.48+: binding kind 7 moves the mouse pointer. "modifiers" holds the
+# axis (0 X, 1 Y); "code" is a signed speed 1..4000: px/s at full depth on Hall
+# keys, px/s (30%->100% over 350 ms) on MX inputs, px per detent on encoders.
+CAP_POINTER = 0x400000
+BINDING_POINTER = 7
+POINTER_MAX = 4000
 ADC_SCAN_RATES = (8000, 16000, 32000, 64000, 96000)
 ADC_WINDOWS = (0, 1, 2, 4, 6, 8)
 INFO, STATUS, GET_KEY, SET_KEY, CALIBRATE, OUTPUT, SAVE, DEFAULTS, GET_BINDING, SET_BINDING = range(1, 11)
@@ -175,7 +181,7 @@ def decode_custom_curve(data):
 def binding_record(value):
     if not isinstance(value, dict):
         raise ProtocolError("binding fields do not match schema")
-    kind = integer(value.get("kind"), 0, 6, "kind")
+    kind = integer(value.get("kind"), 0, 7, "kind")
     fields = CHORD_BIND_FIELDS if kind == 6 else BIND_FIELDS
     if set(value) != set(fields):
         raise ProtocolError("binding fields do not match schema")
@@ -189,6 +195,12 @@ def binding_record(value):
         if any(a >= b for a, b in zip(keys, keys[1:])):
             raise ProtocolError("keyboard chord usages must be distinct and ascending")
         d["keys"] = keys
+        return d
+    if kind == BINDING_POINTER:
+        code = integer(d["code"], -POINTER_MAX, POINTER_MAX, "pointer speed")
+        if not code:
+            raise ProtocolError("pointer speed must not be zero")
+        integer(d["modifiers"], 0, 1, "pointer axis (0 X, 1 Y)")
         return d
     code = integer(d["code"], -1, 65535, "code")
     if kind == 0 and (code or d["modifiers"]):
@@ -209,6 +221,8 @@ def binding_record(value):
 def require_binding_capability(binding, capabilities):
     if binding["kind"] == 6 and not capabilities & CAP_KEY_CHORD:
         raise ProtocolError("Keyboard chords require C86 firmware capability 0x2000")
+    if binding["kind"] == BINDING_POINTER and not capabilities & CAP_POINTER:
+        raise ProtocolError("Pointer movement requires firmware 0.3.48+ capability 0x400000; no device mutation performed")
     extended = binding["kind"] == 5 or (binding["kind"] in (2, 3) and binding["input"] < 20)
     if extended and not capabilities & CAP_MOUSE_BUTTON:
         raise ProtocolError("This binding requires firmware 0.2+; no device mutation performed")
@@ -232,6 +246,8 @@ def decode_binding(data):
     inp, kind, code, mod, reserved = struct.unpack("<BBHBB", data)
     if reserved:
         raise ProtocolError("binding reserved byte")
+    if kind == BINDING_POINTER and code >= 0x8000:
+        code -= 0x10000
     if kind in (2, 3) and code == 65535:
         code = -1
     return binding_record(dict(input=inp, kind=kind, code=code, modifiers=mod))

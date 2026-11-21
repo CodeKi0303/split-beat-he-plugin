@@ -56,6 +56,8 @@ MCP 클라이언트가 도구 이름 앞에 서버 이름을 붙일 수 있습�
 
 키를 지칭하거나 보정·측정을 위해 눌러 달라고 안내하기 전에 연결된 장치의 `keyboard_layout`과 `keyboard_get_config`를 새로 읽습니다. 안내는 현재 매핑의 `binding_label`/`label`(예: **왼쪽 A**)을 사용하고, 매핑을 바꾸면 다시 읽습니다. `physical_position`/`physical_label`의 Q/W 등은 PCB 위치를 설명하는 보조 식별자입니다. 같은 이름이 여러 입력에 있으면 좌우, Hall/MX/노브/롤러 종류와 회전 방향 또는 input ID로 먼저 구분합니다. 예를 들어 Enter는 오른쪽 Hall과 노브 클릭에, F1은 왼쪽 MX와 롤러 방향에 각각 존재합니다. Right Alt의 `code=0, modifiers=64`도 유효한 매핑입니다.
 
+펌웨어 v0.3.48+(capability `0x400000`)는 바인딩 kind 7로 마우스 포인터를 움직입니다. `modifiers`는 축(0 X, 1 Y), `code`는 0이 아닌 부호 있는 속도(-4000..4000, 양수는 오른쪽/아래)입니다. Hall 키는 끝까지 눌렀을 때의 px/s로 눌린 깊이에 비례하고, MX·노브 클릭은 누르는 동안 350 ms에 걸쳐 30%에서 100%로 올라가는 px/s, 노브·롤러 방향은 한 칸당 px입니다. `binding_label`은 `Pointer Right (800)`처럼 표시합니다. 지원하지 않는 펌웨어에는 쓰기 전에 거부합니다.
+
 연결 시 `current_binding`은 현재 RAM 값이며 `dirty=true`이면 **활성 매핑·미저장**입니다. `dirty=false`와 `stored_valid=true`를 함께 확인한 경우에만 저장된 상태로 설명합니다. 연결하지 않은 `keyboard_layout`은 `mapping_source=packaged_defaults`, `current_binding=null`인 기본값 안내일 뿐 실물 상태가 아닙니다. 데모는 별도로 표시합니다. 이름 확인을 위해 자동 연결·초기화·프로필 덮어쓰기를 하지 않습니다.
 
 초기 매핑 28개는 루트 `default-bindings.json`에 고정하며, Python 배포물의 `host/default-bindings.json`과 빌드 시 대조합니다. 2026-11-13 저장 장치에서 **매핑만** 가져온 기준값이며 보정·RT·데드존·스트로크나 장치 식별자는 포함하지 않습니다. 기존 장치 설정과 사용자가 저장한 프로필은 그대로 유지됩니다.
